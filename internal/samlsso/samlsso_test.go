@@ -258,6 +258,10 @@ func (s spUserSource) FindByID(ctx context.Context, id string) (*identity.User, 
 	return s.store.FindByID(ctx, id)
 }
 
+func (s spUserSource) Permissions(_ context.Context, _ string) ([]string, error) {
+	return nil, nil
+}
+
 func (s spUserSource) IsActive(ctx context.Context, id string) (bool, error) {
 	u, err := s.store.FindByID(ctx, id)
 	if errors.Is(err, identity.ErrUserNotFound) {

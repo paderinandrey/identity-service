@@ -20,7 +20,9 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"gopkg.in/yaml.v3"
 
+	"github.com/xometry-europe-gmbh/identity-service/internal/access"
 	"github.com/xometry-europe-gmbh/identity-service/internal/config"
 	"github.com/xometry-europe-gmbh/identity-service/internal/httpserver"
 	"github.com/xometry-europe-gmbh/identity-service/internal/identity"
@@ -61,8 +63,14 @@ func run() error {
 		return postgres.Migrate(ctx, cfg.DatabaseURL)
 	case "create-user":
 		return createUser(ctx, cfg, args)
+	case "grant-role":
+		return changeRole(ctx, cfg, args, true)
+	case "revoke-role":
+		return changeRole(ctx, cfg, args, false)
+	case "seed-access":
+		return seedAccess(ctx, cfg, args)
 	default:
-		return fmt.Errorf("unknown command %q (want serve, migrate or create-user)", cmd)
+		return fmt.Errorf("unknown command %q (want serve, migrate, create-user, grant-role, revoke-role or seed-access)", cmd)
 	}
 }
 
@@ -95,6 +103,7 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	users := &userSource{
 		store:   store,
 		checker: identity.NewActiveChecker(store, cfg.UserRevocationDelay),
+		perms:   access.NewPermissionsCache(postgres.NewAccessStore(pool), cfg.PermissionsCacheTTL),
 	}
 	sessionHandlers := session.NewHandlers(sessions, users, []string{cfg.BaseURL, cfg.FrontendBaseURL})
 
@@ -134,11 +143,12 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	return nil
 }
 
-// userSource joins the store with the cached active-flag checker for
-// session validation endpoints.
+// userSource joins the store with the cached active-flag checker and the
+// cached effective permissions for session validation endpoints.
 type userSource struct {
 	store   *postgres.Store
 	checker *identity.ActiveChecker
+	perms   *access.PermissionsCache
 }
 
 func (u *userSource) FindByID(ctx context.Context, id string) (*identity.User, error) {
@@ -147,6 +157,10 @@ func (u *userSource) FindByID(ctx context.Context, id string) (*identity.User, e
 
 func (u *userSource) IsActive(ctx context.Context, id string) (bool, error) {
 	return u.checker.IsActive(ctx, id)
+}
+
+func (u *userSource) Permissions(ctx context.Context, id string) ([]string, error) {
+	return u.perms.EffectivePermissions(ctx, id)
 }
 
 func connectRedis(ctx context.Context, redisURL string) (*redis.Client, error) {
@@ -215,5 +229,83 @@ func createUser(ctx context.Context, cfg config.Config, args []string) error {
 		return err
 	}
 	fmt.Printf("user %s <%s> id=%s active=%t\n", user.Name, user.Email, user.ID, user.Active)
+	return nil
+}
+
+// cliActor identifies bootstrap CLI operations in the audit journal.
+const cliActor = "cli"
+
+func changeRole(ctx context.Context, cfg config.Config, args []string, grant bool) error {
+	name := "revoke-role"
+	if grant {
+		name = "grant-role"
+	}
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	email := fs.String("email", "", "user email (required)")
+	roleRef := fs.String("role", "", "role as app/role (required)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *email == "" || *roleRef == "" {
+		return fmt.Errorf("%s: --email and --role are required", name)
+	}
+	app, role, err := access.SplitRoleRef(*roleRef)
+	if err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+
+	pool, err := postgres.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	user, err := postgres.NewStore(pool).FindActiveByEmail(ctx, identity.NormalizeEmail(*email))
+	if err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+
+	accessStore := postgres.NewAccessStore(pool)
+	if grant {
+		err = accessStore.GrantRole(ctx, cliActor, user.ID, app, role)
+	} else {
+		err = accessStore.RevokeRole(ctx, cliActor, user.ID, app, role)
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s: %s/%s for %s\n", name, app, role, user.Email)
+	return nil
+}
+
+func seedAccess(ctx context.Context, cfg config.Config, args []string) error {
+	fs := flag.NewFlagSet("seed-access", flag.ContinueOnError)
+	file := fs.String("file", "", "YAML file with applications, permissions and roles (required)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *file == "" {
+		return fmt.Errorf("seed-access: --file is required")
+	}
+
+	raw, err := os.ReadFile(*file)
+	if err != nil {
+		return err
+	}
+	var seedCfg access.SeedConfig
+	if err := yaml.Unmarshal(raw, &seedCfg); err != nil {
+		return fmt.Errorf("seed-access: parse %s: %w", *file, err)
+	}
+
+	pool, err := postgres.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	if err := postgres.NewAccessStore(pool).Seed(ctx, cliActor, seedCfg); err != nil {
+		return err
+	}
+	fmt.Printf("seed-access: %d application(s) reconciled from %s\n", len(seedCfg.Applications), *file)
 	return nil
 }

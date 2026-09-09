@@ -12,11 +12,12 @@ Architecture decision record: `dev/notes/architecture/gsh-dfm-shared-ui-identity
 ## Status
 
 Implemented: SAML SSO against Okta, server-side sessions in Redis, unified
-user storage in PostgreSQL, health/readiness endpoints and the internal
-session-validation endpoint for the entry-point proxy.
+user storage in PostgreSQL, access control (applications, roles, permissions,
+assignments, append-only audit journal), health/readiness endpoints and the
+internal session-validation endpoint for the entry-point proxy.
 
-Planned as separate OpenSpec changes: SCIM provisioning, roles/permissions,
-GraphQL API, user-change events (outbox → RabbitMQ), Single Logout.
+Planned as separate OpenSpec changes: SCIM provisioning, GraphQL API,
+user-change events (outbox → RabbitMQ), Single Logout.
 
 ## Requirements
 
@@ -31,6 +32,9 @@ mise run up         # start PostgreSQL (host port 5433) and Redis (host port 638
 mise run build      # build bin/identity-service
 bin/identity-service migrate                       # apply schema migrations
 bin/identity-service create-user --email you@example.com --name "You"
+bin/identity-service seed-access --file access.yaml     # applications/roles/permissions
+bin/identity-service grant-role --email you@example.com --role gsh/sourcing_manager
+bin/identity-service revoke-role --email you@example.com --role gsh/sourcing_manager
 mise run run        # run the service (serve is the default subcommand)
 mise run test       # go test -race ./... (integration tests need `mise run up`)
 mise run lint       # golangci-lint run
@@ -61,6 +65,7 @@ the SAML flow against an in-process mock IdP, no Okta needed.
 | `SESSION_LIFETIME` | `720h` | Absolute session lifetime |
 | `SESSIONS_MAX_CONCURRENT` | `100` | Per-user session cap; oldest are evicted |
 | `USER_REVOCATION_DELAY` | `60s` | Max staleness of the user active-flag cache |
+| `PERMISSIONS_CACHE_TTL` | `60s` | Max staleness of effective permissions (revocation delay) |
 
 Outside development the connection strings, URLs and secrets are required;
 missing ones fail startup with an explicit list. Invalid values fail startup
@@ -77,8 +82,27 @@ with a non-zero exit code.
 - `GET /auth/me` — current user (id, email, name) or 401
 - `POST /auth/logout` — destroy session (Origin-checked)
 - `GET /internal/session/validate` — for the entry proxy (ext-auth): 200 with
-  `X-Identity-User-Id` / `X-Identity-Email` headers, 401, or 503 (fail-close).
-  Must not be exposed publicly.
+  `X-Identity-User-Id`, `X-Identity-Email` and `X-Identity-Permissions`
+  (comma-separated `app:permission`, empty when the user has no roles) headers,
+  401, or 503 (fail-close). Must not be exposed publicly. The permissions
+  header is an interim contract until a signed internal token is chosen.
+
+## Access control
+
+Roles and permissions belong to applications; assignments are the only
+source of truth for user access and change only in this service. Every
+change is journaled in `access_audit_log` within the same transaction.
+Bootstrap is declarative — `seed-access` reconciles this shape (creating
+what is missing and aligning role composition, never touching assignments):
+
+```yaml
+applications:
+  - name: gsh
+    permissions: [orders.read, orders.write]
+    roles:
+      - name: sourcing_manager
+        permissions: [orders.read, orders.write]
+```
 
 ## Docker
 

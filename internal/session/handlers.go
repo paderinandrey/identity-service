@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/xometry-europe-gmbh/identity-service/internal/identity"
 )
@@ -14,12 +15,18 @@ import (
 const (
 	HeaderUserID = "X-Identity-User-Id"
 	HeaderEmail  = "X-Identity-Email"
+	// HeaderPermissions carries effective permissions as comma-separated
+	// "app:permission" values; present (possibly empty) on every 200.
+	// Interim format until a signed internal token is chosen.
+	HeaderPermissions = "X-Identity-Permissions"
 )
 
-// UserSource resolves users and their current active state.
+// UserSource resolves users, their current active state and effective
+// permissions.
 type UserSource interface {
 	FindByID(ctx context.Context, id string) (*identity.User, error)
 	IsActive(ctx context.Context, id string) (bool, error)
+	Permissions(ctx context.Context, id string) ([]string, error)
 }
 
 // Handlers exposes the HTTP endpoints owned by the session capability.
@@ -109,8 +116,14 @@ func (h *Handlers) handleValidate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	perms, err := h.users.Permissions(r.Context(), user.ID)
+	if err != nil {
+		http.Error(w, "session validation failed", http.StatusServiceUnavailable)
+		return
+	}
 	w.Header().Set(HeaderUserID, user.ID)
 	w.Header().Set(HeaderEmail, user.Email)
+	w.Header().Set(HeaderPermissions, strings.Join(perms, ","))
 	w.WriteHeader(http.StatusOK)
 }
 

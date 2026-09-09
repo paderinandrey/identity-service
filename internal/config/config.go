@@ -28,6 +28,7 @@ const (
 	EnvSessionLifetime       = "SESSION_LIFETIME"
 	EnvSessionsMaxConcurrent = "SESSIONS_MAX_CONCURRENT"
 	EnvUserRevocationDelay   = "USER_REVOCATION_DELAY"
+	EnvPermissionsCacheTTL   = "PERMISSIONS_CACHE_TTL"
 )
 
 // Defaults are safe for local development only.
@@ -47,6 +48,7 @@ const (
 	DefaultSessionLifetime       = 30 * 24 * time.Hour
 	DefaultSessionsMaxConcurrent = 100
 	DefaultUserRevocationDelay   = 60 * time.Second
+	DefaultPermissionsCacheTTL   = 60 * time.Second
 )
 
 var validAppEnvs = map[string]bool{
@@ -74,6 +76,7 @@ type Config struct {
 	SessionLifetime       time.Duration
 	SessionsMaxConcurrent int
 	UserRevocationDelay   time.Duration
+	PermissionsCacheTTL   time.Duration
 }
 
 // IsDevelopment reports whether the service runs in the development environment.
@@ -94,6 +97,7 @@ func Load() (Config, error) {
 		SessionLifetime:       DefaultSessionLifetime,
 		SessionsMaxConcurrent: DefaultSessionsMaxConcurrent,
 		UserRevocationDelay:   DefaultUserRevocationDelay,
+		PermissionsCacheTTL:   DefaultPermissionsCacheTTL,
 	}
 
 	if v := os.Getenv(EnvListenAddr); v != "" {
@@ -123,6 +127,7 @@ func Load() (Config, error) {
 		{EnvSessionIdleTimeout, &cfg.SessionIdleTimeout},
 		{EnvSessionLifetime, &cfg.SessionLifetime},
 		{EnvUserRevocationDelay, &cfg.UserRevocationDelay},
+		{EnvPermissionsCacheTTL, &cfg.PermissionsCacheTTL},
 	} {
 		if err := loadDuration(d.envVar, d.dst); err != nil {
 			return Config{}, err

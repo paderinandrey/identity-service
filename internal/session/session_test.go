@@ -23,7 +23,15 @@ const cookieName = "__identity_session_test"
 type fakeUsers struct {
 	users    map[string]*identity.User
 	inactive map[string]bool
+	perms    map[string][]string
 	failing  bool
+}
+
+func (f *fakeUsers) Permissions(_ context.Context, id string) ([]string, error) {
+	if f.failing {
+		return nil, context.DeadlineExceeded
+	}
+	return f.perms[id], nil
 }
 
 func (f *fakeUsers) FindByID(_ context.Context, id string) (*identity.User, error) {
@@ -66,9 +74,13 @@ func newEnv(t *testing.T, redisClient *redis.Client, cfg Config) *env {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	manager := NewManager(redisClient, cfg, logger)
-	users := &fakeUsers{users: map[string]*identity.User{
-		"u1": {ID: "u1", Email: "u1@example.com", Name: "User One", Active: true},
-	}, inactive: map[string]bool{}}
+	users := &fakeUsers{
+		users: map[string]*identity.User{
+			"u1": {ID: "u1", Email: "u1@example.com", Name: "User One", Active: true},
+		},
+		inactive: map[string]bool{},
+		perms:    map[string][]string{"u1": {"gsh:orders.read", "gsh:orders.write"}},
+	}
 
 	mux := http.NewServeMux()
 	NewHandlers(manager, users, []string{"http://app.example.com"}).Register(mux)
@@ -302,6 +314,24 @@ func TestValidateEndpoint(t *testing.T) {
 	}
 	if resp.Header.Get(HeaderUserID) != "u1" || resp.Header.Get(HeaderEmail) != "u1@example.com" {
 		t.Errorf("validate headers = %q / %q", resp.Header.Get(HeaderUserID), resp.Header.Get(HeaderEmail))
+	}
+	if got := resp.Header.Get(HeaderPermissions); got != "gsh:orders.read,gsh:orders.write" {
+		t.Errorf("permissions header = %q", got)
+	}
+}
+
+func TestValidatePermissionsHeaderEmptyWithoutRoles(t *testing.T) {
+	e := newEnv(t, testRedis(t), defaultConfig())
+	e.users.perms["u1"] = nil
+	e.login(t, "u1")
+
+	resp := e.get(t, "/internal/session/validate")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("validate = %d, want 200", resp.StatusCode)
+	}
+	vals, present := resp.Header[http.CanonicalHeaderKey(HeaderPermissions)]
+	if !present || len(vals) != 1 || vals[0] != "" {
+		t.Errorf("permissions header must be present and empty, got %v (present=%t)", vals, present)
 	}
 }
 
