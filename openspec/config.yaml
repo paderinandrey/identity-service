@@ -1,0 +1,51 @@
+schema: spec-driven
+
+context: |
+  Language: ru
+  All artifacts must be written in ru.
+  Keep OpenSpec structural headings and SHALL/MUST keywords in English.
+
+  Project: Identity & Access Service (Go) для экосистемы GSH / DFM.
+  Архитектурное решение от 2026-09-09 (источник:
+  ~/dev/notes/architecture/gsh-dfm-shared-ui-identity.md):
+  - Общий React/Apollo UI, одна браузерная cookie-сессия (HttpOnly, opaque
+    session id), GraphQL Router (Hive/Cosmo/Apollo — не выбран) как единая
+    точка входа для GSH, DFM, в будущем ERP и Messenger.
+  - Этот сервис владеет: SAML SSO через Okta, серверными сессиями в Redis,
+    едиными пользователями (стабильный UUID, email — атрибут), ролями,
+    permissions и назначениями в PostgreSQL, журналом изменений доступа.
+  - Внутренний HTTP API проверки сессии для external authorization входного
+    proxy (вариант — Envoy Gateway ext-auth); GraphQL API для профилей и
+    управления доступом (совместимость с Federation требует проверки).
+  - События изменений пользователей: transactional outbox в PostgreSQL →
+    RabbitMQ → локальные проекции пользователей в бизнес-сервисах.
+  - Роли принадлежат приложениям (например, DFM/engineer,
+    GSH/sourcing_manager); доменные проверки остаются в сервисах
+    (ActionPolicy); полная копия ролей в GSH/DFM не создаётся.
+  - Не реализуем собственную криптографию или SAML-протокол; не разделяем
+    сессии и роли на отдельные приложения. Развёртывание — Kubernetes.
+  - Ещё не выбраны: версия Go, HTTP/GraphQL-фреймворки, SAML-библиотека,
+    библиотека сессий, драйверы, инструменты миграций, GraphQL Router,
+    входной контроллер, протокол доверенного контекста.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing
