@@ -24,6 +24,7 @@ import (
 
 	"github.com/xometry-europe-gmbh/identity-service/internal/access"
 	"github.com/xometry-europe-gmbh/identity-service/internal/config"
+	graphqlapi "github.com/xometry-europe-gmbh/identity-service/internal/graphql"
 	"github.com/xometry-europe-gmbh/identity-service/internal/httpserver"
 	"github.com/xometry-europe-gmbh/identity-service/internal/identity"
 	"github.com/xometry-europe-gmbh/identity-service/internal/logging"
@@ -100,12 +101,18 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		SecureCookie:  !cfg.IsDevelopment(),
 	}, logger)
 
+	accessStore := postgres.NewAccessStore(pool)
 	users := &userSource{
 		store:   store,
 		checker: identity.NewActiveChecker(store, cfg.UserRevocationDelay),
-		perms:   access.NewPermissionsCache(postgres.NewAccessStore(pool), cfg.PermissionsCacheTTL),
+		perms:   access.NewPermissionsCache(accessStore, cfg.PermissionsCacheTTL),
 	}
 	sessionHandlers := session.NewHandlers(sessions, users, []string{cfg.BaseURL, cfg.FrontendBaseURL})
+	graphqlServer := graphqlapi.NewServer(&graphqlapi.Resolver{
+		Directory: store,
+		Access:    accessStore,
+		Logger:    logger,
+	}, sessions, users, logger)
 
 	var samlService *samlsso.Service
 	if cfg.SAMLIdPMetadataURL != "" {
@@ -131,9 +138,11 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 			if samlService != nil {
 				samlService.Register(authMux)
 			}
+			authMux.Handle("POST /graphql", graphqlServer)
 			withSessions := sessions.Middleware(authMux)
 			mux.Handle("/auth/", withSessions)
 			mux.Handle("/internal/", withSessions)
+			mux.Handle("/graphql", withSessions)
 		}),
 	)
 	if err := srv.Run(ctx); err != nil {

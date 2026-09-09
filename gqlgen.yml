@@ -1,0 +1,27 @@
+schema:
+  - internal/graphql/schema.graphqls
+
+exec:
+  filename: internal/graphql/generated/generated.go
+  package: generated
+
+federation:
+  filename: internal/graphql/generated/federation.go
+  package: generated
+  version: 2
+
+model:
+  filename: internal/graphql/model/models_gen.go
+  package: model
+
+resolver:
+  layout: follow-schema
+  dir: internal/graphql
+  package: graphql
+  filename_template: "{name}.resolvers.go"
+
+models:
+  User:
+    fields:
+      roles:
+        resolver: true

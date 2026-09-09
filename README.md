@@ -13,11 +13,12 @@ Architecture decision record: `dev/notes/architecture/gsh-dfm-shared-ui-identity
 
 Implemented: SAML SSO against Okta, server-side sessions in Redis, unified
 user storage in PostgreSQL, access control (applications, roles, permissions,
-assignments, append-only audit journal), health/readiness endpoints and the
-internal session-validation endpoint for the entry-point proxy.
+assignments, append-only audit journal), a GraphQL federation subgraph for
+profiles and access management, health/readiness endpoints and the internal
+session-validation endpoint for the entry-point proxy.
 
-Planned as separate OpenSpec changes: SCIM provisioning, GraphQL API,
-user-change events (outbox → RabbitMQ), Single Logout.
+Planned as separate OpenSpec changes: SCIM provisioning, user-change events
+(outbox → RabbitMQ), Single Logout, GraphQL Router integration.
 
 ## Requirements
 
@@ -39,6 +40,7 @@ mise run run        # run the service (serve is the default subcommand)
 mise run test       # go test -race ./... (integration tests need `mise run up`)
 mise run lint       # golangci-lint run
 mise run vuln       # govulncheck — run for every dependency change (crewjam/saml is low-activity)
+mise run generate   # regenerate gqlgen code after editing internal/graphql/schema.graphqls
 ```
 
 Non-default host ports 5433/6380 are used because 5432/6379 are commonly
@@ -81,6 +83,7 @@ with a non-zero exit code.
 - `GET /auth/saml/metadata` — SP metadata XML for the IdP configuration
 - `GET /auth/me` — current user (id, email, name) or 401
 - `POST /auth/logout` — destroy session (Origin-checked)
+- `POST /graphql` — GraphQL subgraph (session-authenticated), see below
 - `GET /internal/session/validate` — for the entry proxy (ext-auth): 200 with
   `X-Identity-User-Id`, `X-Identity-Email` and `X-Identity-Permissions`
   (comma-separated `app:permission`, empty when the user has no roles) headers,
@@ -97,11 +100,33 @@ what is missing and aligning role composition, never touching assignments):
 
 ```yaml
 applications:
+  - name: identity
+    permissions: [access.manage]
+    roles:
+      - name: admin
+        permissions: [access.manage]
   - name: gsh
     permissions: [orders.read, orders.write]
     roles:
       - name: sourcing_manager
         permissions: [orders.read, orders.write]
+```
+
+Grant the first access administrator once via CLI:
+`bin/identity-service grant-role --email admin@example.com --role identity/admin`.
+
+## GraphQL
+
+`POST /graphql` is an Apollo Federation v2 subgraph (`User` is an entity
+keyed by `id`); authentication is the browser session cookie. Directory
+queries (`me`, `users`, `user`, `applications`) are open to any
+authenticated user; `grantRole` / `revokeRole` mutations and
+`accessAuditLog` require the `identity:access.manage` permission and
+record the caller as the audit actor.
+
+```graphql
+query { me { user { id name } permissions } }
+mutation { grantRole(userId: "…", role: "gsh/sourcing_manager") { roles { role } } }
 ```
 
 ## Docker

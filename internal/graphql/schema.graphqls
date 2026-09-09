@@ -1,0 +1,67 @@
+scalar Time
+
+"""
+Unified application user; referenced by GSH/DFM subgraphs by global id.
+"""
+type User @key(fields: "id") {
+  id: ID!
+  email: String!
+  name: String!
+  active: Boolean!
+  lastSignInAt: Time
+  roles: [RoleAssignment!]!
+}
+
+"""
+Current viewer with effective permissions.
+"""
+type Me {
+  user: User!
+  permissions: [String!]!
+}
+
+type RoleAssignment {
+  application: String!
+  role: String!
+  grantedBy: String!
+  grantedAt: Time!
+}
+
+type Application {
+  name: String!
+  permissions: [String!]!
+  roles: [Role!]!
+}
+
+type Role {
+  application: String!
+  name: String!
+  permissions: [String!]!
+}
+
+type AuditEntry {
+  id: ID!
+  actor: String!
+  action: String!
+  targetUserId: ID
+  "JSON-encoded action details"
+  details: String!
+  createdAt: Time!
+}
+
+type Query {
+  me: Me!
+  "Active users matching search; includeInactive adds deactivated ones."
+  users(search: String, includeInactive: Boolean! = false): [User!]!
+  user(id: ID!): User
+  applications: [Application!]!
+  "Requires identity:access.manage."
+  accessAuditLog(limit: Int! = 50): [AuditEntry!]!
+}
+
+type Mutation {
+  "Requires identity:access.manage. Role format: app/role."
+  grantRole(userId: ID!, role: String!): User!
+  "Requires identity:access.manage. Role format: app/role."
+  revokeRole(userId: ID!, role: String!): User!
+}

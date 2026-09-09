@@ -25,3 +25,7 @@ run = "docker compose up -d --wait"
 [tasks.vuln]
 description = "Scan dependencies for known vulnerabilities"
 run = "go run golang.org/x/vuln/cmd/govulncheck@latest ./..."
+
+[tasks.generate]
+description = "Regenerate gqlgen GraphQL code from the schema"
+run = "go tool gqlgen generate"

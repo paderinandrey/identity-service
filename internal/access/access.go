@@ -41,6 +41,39 @@ type Store interface {
 	Seed(ctx context.Context, actor string, cfg SeedConfig) error
 }
 
+// Application is the directory read model: an application with its
+// permissions and roles.
+type Application struct {
+	Name        string
+	Permissions []string
+	Roles       []Role
+}
+
+// Role is a role with its permission composition.
+type Role struct {
+	Application string
+	Name        string
+	Permissions []string
+}
+
+// Assignment is one user-role assignment.
+type Assignment struct {
+	Application string
+	Role        string
+	GrantedBy   string
+	GrantedAt   time.Time
+}
+
+// AuditEntry is one journal record.
+type AuditEntry struct {
+	ID           string
+	Actor        string
+	Action       string
+	TargetUserID string // empty when the action has no user target
+	Details      string // JSON
+	CreatedAt    time.Time
+}
+
 // SeedConfig is the declarative bootstrap format (loaded from YAML).
 type SeedConfig struct {
 	Applications []SeedApplication `yaml:"applications"`
