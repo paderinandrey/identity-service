@@ -11,19 +11,37 @@ import (
 	"time"
 )
 
+// Option customizes the server.
+type Option func(*Server)
+
+// WithReadyCheck adds a dependency check consulted by /readyz.
+func WithReadyCheck(check func(context.Context) error) Option {
+	return func(s *Server) { s.readyCheck = check }
+}
+
+// WithRoutes registers application routes on the server mux.
+func WithRoutes(register func(mux *http.ServeMux)) Option {
+	return func(s *Server) { s.registerRoutes = register }
+}
+
 // Server wraps http.Server with readiness state and graceful shutdown.
 type Server struct {
 	httpServer      *http.Server
 	logger          *slog.Logger
 	shutdownTimeout time.Duration
 	ready           atomic.Bool
+	readyCheck      func(context.Context) error
+	registerRoutes  func(mux *http.ServeMux)
 }
 
 // New builds a Server listening on addr.
-func New(addr string, logger *slog.Logger, shutdownTimeout time.Duration) *Server {
+func New(addr string, logger *slog.Logger, shutdownTimeout time.Duration, opts ...Option) *Server {
 	s := &Server{
 		logger:          logger,
 		shutdownTimeout: shutdownTimeout,
+	}
+	for _, opt := range opts {
+		opt(s)
 	}
 	s.httpServer = &http.Server{
 		Addr:              addr,
@@ -37,6 +55,9 @@ func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
+	if s.registerRoutes != nil {
+		s.registerRoutes(mux)
+	}
 	return mux
 }
 
@@ -49,10 +70,17 @@ func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	writeStatus(w, http.StatusOK, `{"status":"ok"}`)
 }
 
-func (s *Server) handleReadyz(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	if !s.ready.Load() {
 		writeStatus(w, http.StatusServiceUnavailable, `{"status":"shutting down"}`)
 		return
+	}
+	if s.readyCheck != nil {
+		if err := s.readyCheck(r.Context()); err != nil {
+			s.logger.Warn("readiness check failed", "error", err)
+			writeStatus(w, http.StatusServiceUnavailable, `{"status":"dependency unavailable"}`)
+			return
+		}
 	}
 	writeStatus(w, http.StatusOK, `{"status":"ok"}`)
 }

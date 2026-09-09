@@ -54,6 +54,9 @@ func TestReadyz(t *testing.T) {
 	}
 }
 
+// noKeepAliveClient avoids pooled connections that would delay Shutdown.
+var noKeepAliveClient = &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+
 // TestRunLifecycle starts a real server on a random port, checks both
 // endpoints answer 200, then cancels the context and checks the server
 // stops and readiness drops.
@@ -91,7 +94,7 @@ func TestRunLifecycle(t *testing.T) {
 		t.Error("readiness must be false after shutdown")
 	}
 
-	if _, err := http.Get(baseURL + "/healthz"); err == nil {
+	if _, err := noKeepAliveClient.Get(baseURL + "/healthz"); err == nil {
 		t.Error("server must not accept connections after shutdown")
 	}
 }
@@ -100,7 +103,7 @@ func waitFor(t *testing.T, url string, want int) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(url)
+		resp, err := noKeepAliveClient.Get(url)
 		if err == nil {
 			defer func() { _ = resp.Body.Close() }()
 			if resp.StatusCode != want {
