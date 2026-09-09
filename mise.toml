@@ -1,0 +1,23 @@
+[tools]
+go = "1.27.1"
+golangci-lint = "2.13.2"
+
+[tasks.build]
+description = "Build the service binary into bin/"
+run = "go build -o bin/identity-service ./cmd/identity-service"
+
+[tasks.test]
+description = "Run all tests with the race detector"
+run = "go test -race ./..."
+
+[tasks.lint]
+description = "Run golangci-lint"
+run = "golangci-lint run"
+
+[tasks.run]
+description = "Run the service locally"
+run = "go run ./cmd/identity-service"
+
+[tasks.up]
+description = "Start local PostgreSQL and Redis"
+run = "docker compose up -d --wait"

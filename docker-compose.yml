@@ -1,0 +1,37 @@
+# Local infrastructure for future changes (DB schema, sessions).
+# The application does not connect to these containers yet.
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: identity
+      POSTGRES_PASSWORD: identity
+      POSTGRES_DB: identity_development
+    ports:
+      # 5433 on the host: 5432 is taken by other local projects
+      - "5433:5432"
+    volumes:
+      # postgres:18+ expects the mount one level above the data directory
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U identity -d identity_development"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:8.10
+    ports:
+      # 6380 on the host: 6379 is taken by other local projects
+      - "6380:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:
+  redis-data:
