@@ -145,3 +145,24 @@ func TestProductionWithAllRequired(t *testing.T) {
 		t.Errorf("BaseURL = %q, want trailing slash trimmed", cfg.BaseURL)
 	}
 }
+
+func TestSCIMToken(t *testing.T) {
+	t.Setenv(EnvAppEnv, "development")
+
+	cfg, err := Load()
+	if err != nil || cfg.SCIMToken != "" {
+		t.Fatalf("without SCIM_TOKEN: cfg.SCIMToken = %q, err = %v; want empty, nil", cfg.SCIMToken, err)
+	}
+
+	t.Setenv(EnvSCIMToken, "short")
+	if _, err := Load(); err == nil {
+		t.Error("short SCIM token must fail startup")
+	}
+
+	long := strings.Repeat("x", 32)
+	t.Setenv(EnvSCIMToken, long)
+	cfg, err = Load()
+	if err != nil || cfg.SCIMToken != long {
+		t.Errorf("valid SCIM token: %q, err = %v", cfg.SCIMToken, err)
+	}
+}

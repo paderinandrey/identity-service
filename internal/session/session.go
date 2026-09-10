@@ -135,6 +135,26 @@ func (m *Manager) Destroy(ctx context.Context) error {
 	return nil
 }
 
+// DestroyAllForUser immediately terminates every session of the user by
+// walking the per-user index; used by provisioning deactivation.
+func (m *Manager) DestroyAllForUser(ctx context.Context, userID string) error {
+	indexKey := userIndexKey + userID
+	tokens, err := m.redis.ZRange(ctx, indexKey, 0, -1).Result()
+	if err != nil {
+		return fmt.Errorf("read user session index: %w", err)
+	}
+	store, ok := m.scs.Store.(scs.CtxStore)
+	if !ok {
+		return fmt.Errorf("session store does not support context-aware deletion")
+	}
+	for _, token := range tokens {
+		if err := store.DeleteCtx(ctx, token); err != nil {
+			return fmt.Errorf("destroy session: %w", err)
+		}
+	}
+	return m.redis.Del(ctx, indexKey).Err()
+}
+
 func toAnySlice(ss []string) []any {
 	out := make([]any, len(ss))
 	for i, s := range ss {

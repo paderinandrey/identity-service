@@ -10,11 +10,20 @@ import (
 	"time"
 )
 
-// ProviderOkta is the only identity provider supported so far.
-const ProviderOkta = "okta"
+// Identity providers.
+const (
+	// ProviderOkta holds SAML subjects (NameID).
+	ProviderOkta = "okta"
+	// ProviderOktaSCIM holds stable Okta user ids delivered by SCIM externalId.
+	ProviderOktaSCIM = "okta-scim"
+)
 
-// ErrUserNotFound is returned when no matching active user exists.
-var ErrUserNotFound = errors.New("user not found")
+var (
+	// ErrUserNotFound is returned when no matching active user exists.
+	ErrUserNotFound = errors.New("user not found")
+	// ErrDuplicate is returned when a uniqueness constraint is violated.
+	ErrDuplicate = errors.New("duplicate value")
+)
 
 // User is a unified application user.
 type User struct {

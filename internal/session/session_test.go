@@ -368,3 +368,41 @@ func TestValidateFailsClosedWhenRedisDown(t *testing.T) {
 		t.Errorf("validate with Redis down = %d, want 503 (fail-close, not 200/401)", resp.StatusCode)
 	}
 }
+
+func TestDestroyAllForUser(t *testing.T) {
+	redisClient := testRedis(t)
+	e := newEnv(t, redisClient, defaultConfig())
+
+	tokens := make([]string, 3)
+	for i := range 3 {
+		jar, _ := cookiejar.New(nil)
+		e.client = &http.Client{Jar: jar}
+		e.login(t, "u1")
+		tokens[i] = e.sessionCookie(t).Value
+	}
+
+	if err := e.manager.DestroyAllForUser(t.Context(), "u1"); err != nil {
+		t.Fatalf("DestroyAllForUser: %v", err)
+	}
+
+	for _, token := range tokens {
+		req, _ := http.NewRequest(http.MethodGet, e.server.URL+"/auth/me", nil)
+		req.AddCookie(&http.Cookie{Name: cookieName, Value: token})
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("session %q after DestroyAllForUser = %d, want 401", token[:8], resp.StatusCode)
+		}
+	}
+
+	count, err := redisClient.ZCard(t.Context(), "user_sessions:u1").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("user session index has %d entries, want 0", count)
+	}
+}

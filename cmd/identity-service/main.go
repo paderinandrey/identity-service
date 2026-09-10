@@ -30,6 +30,7 @@ import (
 	"github.com/xometry-europe-gmbh/identity-service/internal/logging"
 	"github.com/xometry-europe-gmbh/identity-service/internal/postgres"
 	"github.com/xometry-europe-gmbh/identity-service/internal/samlsso"
+	"github.com/xometry-europe-gmbh/identity-service/internal/scim"
 	"github.com/xometry-europe-gmbh/identity-service/internal/session"
 )
 
@@ -143,6 +144,12 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 			mux.Handle("/auth/", withSessions)
 			mux.Handle("/internal/", withSessions)
 			mux.Handle("/graphql", withSessions)
+			// SCIM is machine-authenticated: mounted outside the session
+			// middleware, and only when a client token is configured.
+			if cfg.SCIMToken != "" {
+				scim.NewHandlers(store, sessions, cfg.SCIMToken, logger).Register(mux)
+				logger.Info("SCIM provisioning enabled")
+			}
 		}),
 	)
 	if err := srv.Run(ctx); err != nil {

@@ -17,8 +17,11 @@ assignments, append-only audit journal), a GraphQL federation subgraph for
 profiles and access management, health/readiness endpoints and the internal
 session-validation endpoint for the entry-point proxy.
 
-Planned as separate OpenSpec changes: SCIM provisioning, user-change events
-(outbox → RabbitMQ), Single Logout, GraphQL Router integration.
+Also implemented: SCIM 2.0 provisioning from Okta (create/update/deactivate
+with immediate session revocation).
+
+Planned as separate OpenSpec changes: user-change events (outbox → RabbitMQ),
+Single Logout, GraphQL Router integration.
 
 ## Requirements
 
@@ -68,6 +71,7 @@ the SAML flow against an in-process mock IdP, no Okta needed.
 | `SESSIONS_MAX_CONCURRENT` | `100` | Per-user session cap; oldest are evicted |
 | `USER_REVOCATION_DELAY` | `60s` | Max staleness of the user active-flag cache |
 | `PERMISSIONS_CACHE_TTL` | `60s` | Max staleness of effective permissions (revocation delay) |
+| `SCIM_TOKEN` | — (SCIM disabled) | Bearer token for the Okta SCIM client (min 32 chars) |
 
 Outside development the connection strings, URLs and secrets are required;
 missing ones fail startup with an explicit list. Invalid values fail startup
@@ -128,6 +132,26 @@ record the caller as the audit actor.
 query { me { user { id name } permissions } }
 mutation { grantRole(userId: "…", role: "gsh/sourcing_manager") { roles { role } } }
 ```
+
+## SCIM provisioning
+
+With `SCIM_TOKEN` set, `/scim/v2/*` serves the SCIM 2.0 subset used by
+Okta: `Users` CRUD with PATCH, `userName eq` / `externalId eq` filters,
+pagination and discovery (`ServiceProviderConfig`, `ResourceTypes`,
+`Schemas`). Authentication is the static bearer token; without the token
+the routes are not mounted at all.
+
+- `userName` maps to email, `displayName` to name; `externalId` (Okta's
+  stable user id) is stored as an `okta-scim` external identity.
+- Deactivation (`active=false` via PUT/PATCH, or DELETE) is soft: the user
+  keeps their UUID, history and role assignments, and **all their sessions
+  are destroyed immediately** — deactivation in Okta locks the person out
+  at once. Reactivation is supported; old sessions do not come back.
+- Groups are not supported by design: role assignments live in this
+  service only (see Access control above).
+
+Okta app setup: SCIM connector base URL `BASE_URL/scim/v2`, auth mode
+"HTTP Header" with the bearer token.
 
 ## Docker
 

@@ -29,6 +29,7 @@ const (
 	EnvSessionsMaxConcurrent = "SESSIONS_MAX_CONCURRENT"
 	EnvUserRevocationDelay   = "USER_REVOCATION_DELAY"
 	EnvPermissionsCacheTTL   = "PERMISSIONS_CACHE_TTL"
+	EnvSCIMToken             = "SCIM_TOKEN"
 )
 
 // Defaults are safe for local development only.
@@ -77,6 +78,9 @@ type Config struct {
 	SessionsMaxConcurrent int
 	UserRevocationDelay   time.Duration
 	PermissionsCacheTTL   time.Duration
+
+	// SCIMToken enables SCIM provisioning endpoints when non-empty.
+	SCIMToken string
 }
 
 // IsDevelopment reports whether the service runs in the development environment.
@@ -152,6 +156,11 @@ func Load() (Config, error) {
 	cfg.FrontendBaseURL = strings.TrimRight(os.Getenv(EnvFrontendBaseURL), "/")
 	cfg.SAMLIdPMetadataURL = os.Getenv(EnvSAMLIdPMetadataURL)
 	cfg.RelayStateSecret = os.Getenv(EnvRelayStateSecret)
+
+	cfg.SCIMToken = os.Getenv(EnvSCIMToken)
+	if cfg.SCIMToken != "" && len(cfg.SCIMToken) < 32 {
+		return Config{}, fmt.Errorf("%s: token must be at least 32 characters", EnvSCIMToken)
+	}
 
 	if cfg.IsDevelopment() {
 		applyDevelopmentDefaults(&cfg)
