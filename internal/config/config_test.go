@@ -121,7 +121,7 @@ func TestProductionRequiresConnections(t *testing.T) {
 	if err == nil {
 		t.Fatal("Load() in production without required vars: want error, got nil")
 	}
-	for _, name := range []string{EnvDatabaseURL, EnvRedisURL, EnvBaseURL, EnvFrontendBaseURL, EnvSAMLIdPMetadataURL, EnvRelayStateSecret} {
+	for _, name := range []string{EnvDatabaseURL, EnvRedisURL, EnvBaseURL, EnvFrontendBaseURL, EnvSAMLIdPMetadataURL, EnvRelayStateSecret, EnvRabbitMQURL} {
 		if !strings.Contains(err.Error(), name) {
 			t.Errorf("error must name missing %s, got: %v", name, err)
 		}
@@ -136,6 +136,7 @@ func TestProductionWithAllRequired(t *testing.T) {
 	t.Setenv(EnvFrontendBaseURL, "https://app.example.com")
 	t.Setenv(EnvSAMLIdPMetadataURL, "https://example.okta.com/app/xxx/sso/saml/metadata")
 	t.Setenv(EnvRelayStateSecret, "s3cret")
+	t.Setenv(EnvRabbitMQURL, "amqp://mq:5672/")
 
 	cfg, err := Load()
 	if err != nil {
@@ -164,5 +165,23 @@ func TestSCIMToken(t *testing.T) {
 	cfg, err = Load()
 	if err != nil || cfg.SCIMToken != long {
 		t.Errorf("valid SCIM token: %q, err = %v", cfg.SCIMToken, err)
+	}
+}
+
+func TestEventsConfig(t *testing.T) {
+	t.Setenv(EnvAppEnv, "development")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RabbitMQURL != DefaultRabbitMQURL || cfg.EventsExchange != DefaultEventsExchange {
+		t.Errorf("dev defaults: %q %q", cfg.RabbitMQURL, cfg.EventsExchange)
+	}
+
+	t.Setenv(EnvEventsExchange, "custom.events")
+	cfg, err = Load()
+	if err != nil || cfg.EventsExchange != "custom.events" {
+		t.Errorf("override: %q, err = %v", cfg.EventsExchange, err)
 	}
 }

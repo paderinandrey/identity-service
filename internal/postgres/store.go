@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/xometry-europe-gmbh/identity-service/internal/events"
 	"github.com/xometry-europe-gmbh/identity-service/internal/identity"
 )
 
@@ -35,11 +36,11 @@ func NewStore(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
 }
 
-const userColumns = "id, email, name, active, last_sign_in_at, created_at, updated_at"
+const userColumns = "id, email, name, active, version, last_sign_in_at, created_at, updated_at"
 
 func (s *Store) scanUser(row pgx.Row) (*identity.User, error) {
 	var u identity.User
-	err := row.Scan(&u.ID, &u.Email, &u.Name, &u.Active, &u.LastSignInAt, &u.CreatedAt, &u.UpdatedAt)
+	err := row.Scan(&u.ID, &u.Email, &u.Name, &u.Active, &u.Version, &u.LastSignInAt, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, identity.ErrUserNotFound
 	}
@@ -58,7 +59,7 @@ func (s *Store) FindByID(ctx context.Context, id string) (*identity.User, error)
 // FindByIdentity returns the user linked to (provider, subject), or ErrUserNotFound.
 func (s *Store) FindByIdentity(ctx context.Context, provider, subject string) (*identity.User, error) {
 	return s.scanUser(s.pool.QueryRow(ctx,
-		`SELECT u.id, u.email, u.name, u.active, u.last_sign_in_at, u.created_at, u.updated_at
+		`SELECT u.id, u.email, u.name, u.active, u.version, u.last_sign_in_at, u.created_at, u.updated_at
 		 FROM users u
 		 JOIN user_identities i ON i.user_id = u.id
 		 WHERE i.provider = $1 AND i.subject = $2`, provider, subject))
@@ -88,12 +89,43 @@ func (s *Store) AttachIdentity(ctx context.Context, userID, provider, subject st
 }
 
 // UpsertByEmail creates the user or updates the name, idempotent by email.
-// The active flag of an existing user is left untouched.
+// The active flag of an existing user is left untouched. Records a
+// created/updated event in the same transaction; a no-op upsert (same
+// name) records nothing.
 func (s *Store) UpsertByEmail(ctx context.Context, email, name string) (*identity.User, error) {
-	return s.scanUser(s.pool.QueryRow(ctx,
-		`INSERT INTO users (email, name) VALUES ($1, $2)
-		 ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, updated_at = now()
-		 RETURNING `+userColumns, identity.NormalizeEmail(email), name))
+	normalized := identity.NormalizeEmail(email)
+	var user *identity.User
+	err := s.inTx(ctx, func(tx pgx.Tx) error {
+		existing, err := s.scanUser(tx.QueryRow(ctx,
+			"SELECT "+userColumns+" FROM users WHERE email = $1 FOR UPDATE", normalized))
+		switch {
+		case errors.Is(err, identity.ErrUserNotFound):
+			user, err = s.scanUser(tx.QueryRow(ctx,
+				`INSERT INTO users (email, name) VALUES ($1, $2)
+				 RETURNING `+userColumns, normalized, name))
+			if err != nil {
+				return err
+			}
+			return recordUserEvent(ctx, tx, events.TypeCreated, user)
+		case err != nil:
+			return err
+		case existing.Name == name:
+			user = existing
+			return nil
+		default:
+			user, err = s.scanUser(tx.QueryRow(ctx,
+				`UPDATE users SET name = $2, version = version + 1, updated_at = now()
+				 WHERE id = $1 RETURNING `+userColumns, existing.ID, name))
+			if err != nil {
+				return err
+			}
+			return recordUserEvent(ctx, tx, events.TypeUpdated, user)
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	return user, nil
 }
 
 // TouchLastSignIn records a successful sign-in.

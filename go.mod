@@ -31,6 +31,7 @@ require (
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mattermost/xml-roundtrip-validator v0.1.0 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
+	github.com/rabbitmq/amqp091-go v1.14.0 // indirect
 	github.com/russellhaering/goxmldsig v1.6.0 // indirect
 	github.com/sethvargo/go-retry v0.4.0 // indirect
 	github.com/sosodev/duration v1.4.0 // indirect

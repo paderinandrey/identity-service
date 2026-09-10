@@ -18,10 +18,11 @@ profiles and access management, health/readiness endpoints and the internal
 session-validation endpoint for the entry-point proxy.
 
 Also implemented: SCIM 2.0 provisioning from Okta (create/update/deactivate
-with immediate session revocation).
+with immediate session revocation) and user-change events delivered to
+RabbitMQ through a transactional outbox.
 
-Planned as separate OpenSpec changes: user-change events (outbox → RabbitMQ),
-Single Logout, GraphQL Router integration.
+Planned as separate OpenSpec changes: Single Logout, GraphQL Router
+integration.
 
 ## Requirements
 
@@ -32,13 +33,14 @@ Single Logout, GraphQL Router integration.
 
 ```bash
 mise install        # install pinned Go and golangci-lint
-mise run up         # start PostgreSQL (host port 5433) and Redis (host port 6380)
+mise run up         # PostgreSQL (5433), Redis (6380), RabbitMQ (5673, UI on 15673)
 mise run build      # build bin/identity-service
 bin/identity-service migrate                       # apply schema migrations
 bin/identity-service create-user --email you@example.com --name "You"
 bin/identity-service seed-access --file access.yaml     # applications/roles/permissions
 bin/identity-service grant-role --email you@example.com --role gsh/sourcing_manager
 bin/identity-service revoke-role --email you@example.com --role gsh/sourcing_manager
+bin/identity-service replay-users                       # enqueue user snapshots for consumers
 mise run run        # run the service (serve is the default subcommand)
 mise run test       # go test -race ./... (integration tests need `mise run up`)
 mise run lint       # golangci-lint run
@@ -72,6 +74,8 @@ the SAML flow against an in-process mock IdP, no Okta needed.
 | `USER_REVOCATION_DELAY` | `60s` | Max staleness of the user active-flag cache |
 | `PERMISSIONS_CACHE_TTL` | `60s` | Max staleness of effective permissions (revocation delay) |
 | `SCIM_TOKEN` | — (SCIM disabled) | Bearer token for the Okta SCIM client (min 32 chars) |
+| `RABBITMQ_URL` | compose broker on `localhost:5673` | RabbitMQ connection string (user events) |
+| `EVENTS_EXCHANGE` | `identity.events` | Topic exchange for user-change events |
 
 Outside development the connection strings, URLs and secrets are required;
 missing ones fail startup with an explicit list. Invalid values fail startup
@@ -152,6 +156,29 @@ the routes are not mounted at all.
 
 Okta app setup: SCIM connector base URL `BASE_URL/scim/v2`, auth mode
 "HTTP Header" with the bearer token.
+
+## User events
+
+Every user change (create, profile update, deactivate/reactivate) writes an
+event into the `user_events_outbox` table **in the same transaction**; a
+relay inside `serve` publishes them to the durable topic exchange
+`identity.events` with publisher confirms. Routing keys: `user.created`,
+`user.updated`, `user.deactivated`, `user.reactivated`, `user.snapshot`.
+
+Message body (`schemaVersion` 1):
+
+```json
+{"id": "…", "type": "identity.user.updated", "schemaVersion": 1,
+ "occurredAt": "2026-09-10T00:00:00Z",
+ "user": {"id": "…", "email": "…", "name": "…", "active": true, "version": 4}}
+```
+
+`user.version` grows with every change — consumers must drop updates with a
+version not greater than the one already applied, and deduplicate by the
+AMQP `message_id` (equal to `id`). Delivery is at-least-once; events survive
+broker outages and service restarts in the outbox. `replay-users` enqueues
+`user.snapshot` events for every user to bootstrap or repair a projection.
+The broker is deliberately excluded from `/readyz`.
 
 ## Docker
 

@@ -31,6 +31,7 @@ type User struct {
 	Email        string
 	Name         string
 	Active       bool
+	Version      int64
 	LastSignInAt *time.Time
 	CreatedAt    time.Time
 	UpdatedAt    time.Time

@@ -24,6 +24,7 @@ import (
 
 	"github.com/xometry-europe-gmbh/identity-service/internal/access"
 	"github.com/xometry-europe-gmbh/identity-service/internal/config"
+	"github.com/xometry-europe-gmbh/identity-service/internal/events"
 	graphqlapi "github.com/xometry-europe-gmbh/identity-service/internal/graphql"
 	"github.com/xometry-europe-gmbh/identity-service/internal/httpserver"
 	"github.com/xometry-europe-gmbh/identity-service/internal/identity"
@@ -71,8 +72,10 @@ func run() error {
 		return changeRole(ctx, cfg, args, false)
 	case "seed-access":
 		return seedAccess(ctx, cfg, args)
+	case "replay-users":
+		return replayUsers(ctx, cfg)
 	default:
-		return fmt.Errorf("unknown command %q (want serve, migrate, create-user, grant-role, revoke-role or seed-access)", cmd)
+		return fmt.Errorf("unknown command %q (want serve, migrate, create-user, grant-role, revoke-role, seed-access or replay-users)", cmd)
 	}
 }
 
@@ -130,6 +133,9 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	} else {
 		logger.Warn("SAML_IDP_METADATA_URL is not set: SSO routes are disabled")
 	}
+
+	relay := events.NewRelay(pool, cfg.RabbitMQURL, cfg.EventsExchange, logger)
+	go relay.Run(ctx)
 
 	srv := httpserver.New(cfg.ListenAddr, logger, cfg.ShutdownTimeout,
 		httpserver.WithReadyCheck(dependencyCheck(pool, redisClient)),
@@ -323,5 +329,20 @@ func seedAccess(ctx context.Context, cfg config.Config, args []string) error {
 		return err
 	}
 	fmt.Printf("seed-access: %d application(s) reconciled from %s\n", len(seedCfg.Applications), *file)
+	return nil
+}
+
+func replayUsers(ctx context.Context, cfg config.Config) error {
+	pool, err := postgres.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	n, err := postgres.NewStore(pool).EnqueueSnapshots(ctx, 500)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("replay-users: %d snapshot event(s) enqueued\n", n)
 	return nil
 }

@@ -30,6 +30,8 @@ const (
 	EnvUserRevocationDelay   = "USER_REVOCATION_DELAY"
 	EnvPermissionsCacheTTL   = "PERMISSIONS_CACHE_TTL"
 	EnvSCIMToken             = "SCIM_TOKEN"
+	EnvRabbitMQURL           = "RABBITMQ_URL"
+	EnvEventsExchange        = "EVENTS_EXCHANGE"
 )
 
 // Defaults are safe for local development only.
@@ -50,6 +52,9 @@ const (
 	DefaultSessionsMaxConcurrent = 100
 	DefaultUserRevocationDelay   = 60 * time.Second
 	DefaultPermissionsCacheTTL   = 60 * time.Second
+
+	DefaultRabbitMQURL    = "amqp://identity:identity@localhost:5673/"
+	DefaultEventsExchange = "identity.events"
 )
 
 var validAppEnvs = map[string]bool{
@@ -81,6 +86,9 @@ type Config struct {
 
 	// SCIMToken enables SCIM provisioning endpoints when non-empty.
 	SCIMToken string
+
+	RabbitMQURL    string
+	EventsExchange string
 }
 
 // IsDevelopment reports whether the service runs in the development environment.
@@ -157,6 +165,12 @@ func Load() (Config, error) {
 	cfg.SAMLIdPMetadataURL = os.Getenv(EnvSAMLIdPMetadataURL)
 	cfg.RelayStateSecret = os.Getenv(EnvRelayStateSecret)
 
+	cfg.RabbitMQURL = os.Getenv(EnvRabbitMQURL)
+	cfg.EventsExchange = os.Getenv(EnvEventsExchange)
+	if cfg.EventsExchange == "" {
+		cfg.EventsExchange = DefaultEventsExchange
+	}
+
 	cfg.SCIMToken = os.Getenv(EnvSCIMToken)
 	if cfg.SCIMToken != "" && len(cfg.SCIMToken) < 32 {
 		return Config{}, fmt.Errorf("%s: token must be at least 32 characters", EnvSCIMToken)
@@ -203,6 +217,9 @@ func applyDevelopmentDefaults(cfg *Config) {
 	if cfg.RelayStateSecret == "" {
 		cfg.RelayStateSecret = DefaultRelayStateSecret
 	}
+	if cfg.RabbitMQURL == "" {
+		cfg.RabbitMQURL = DefaultRabbitMQURL
+	}
 	// SAMLIdPMetadataURL has no development default: without it SSO routes
 	// are not mounted and the service logs a warning.
 }
@@ -218,6 +235,7 @@ func missingRequired(cfg Config) []string {
 		{EnvFrontendBaseURL, cfg.FrontendBaseURL},
 		{EnvSAMLIdPMetadataURL, cfg.SAMLIdPMetadataURL},
 		{EnvRelayStateSecret, cfg.RelayStateSecret},
+		{EnvRabbitMQURL, cfg.RabbitMQURL},
 	} {
 		if req.value == "" {
 			missing = append(missing, req.envVar)
