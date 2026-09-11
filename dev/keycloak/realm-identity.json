@@ -1,0 +1,41 @@
+{
+  "realm": "identity",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "users": [
+    {
+      "username": "qa@example.com",
+      "email": "qa@example.com",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "QA",
+      "lastName": "User",
+      "credentials": [
+        { "type": "password", "value": "password", "temporary": false }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "http://localhost:8080/auth/saml/metadata",
+      "name": "identity-service (local)",
+      "protocol": "saml",
+      "enabled": true,
+      "rootUrl": "http://localhost:8080",
+      "baseUrl": "/",
+      "redirectUris": ["http://localhost:8080/auth/saml/acs"],
+      "frontchannelLogout": true,
+      "attributes": {
+        "saml.assertion.signature": "true",
+        "saml.server.signature": "true",
+        "saml.client.signature": "false",
+        "saml.authnstatement": "true",
+        "saml.force.post.binding": "true",
+        "saml_name_id_format": "email",
+        "saml.signature.algorithm": "RSA_SHA256",
+        "saml_assertion_consumer_url_post": "http://localhost:8080/auth/saml/acs"
+      }
+    }
+  ]
+}

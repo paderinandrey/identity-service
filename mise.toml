@@ -19,8 +19,12 @@ description = "Run the service locally"
 run = "go run ./cmd/identity-service"
 
 [tasks.up]
-description = "Start local PostgreSQL and Redis"
+description = "Start local PostgreSQL, Redis and RabbitMQ"
 run = "docker compose up -d --wait"
+
+[tasks.up-sso]
+description = "Start local infrastructure plus Keycloak (SAML IdP for SSO development)"
+run = "docker compose --profile sso up -d --wait"
 
 [tasks.vuln]
 description = "Scan dependencies for known vulnerabilities"

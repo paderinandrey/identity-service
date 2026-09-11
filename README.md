@@ -56,6 +56,24 @@ taken by other local projects. Without `SAML_IDP_METADATA_URL` the service
 starts with SSO routes disabled (development convenience); tests exercise
 the SAML flow against an in-process mock IdP, no Okta needed.
 
+### Local SSO with Keycloak
+
+To actually sign in locally, start Keycloak (SAML IdP) with a preconfigured
+realm and point the service at it:
+
+```bash
+mise run up-sso     # infrastructure + Keycloak on http://localhost:8081 (admin/admin)
+bin/identity-service create-user --email qa@example.com --name "QA User"
+SAML_IDP_METADATA_URL="http://localhost:8081/realms/identity/protocol/saml/descriptor" mise run run
+open http://localhost:8080/auth/saml/init   # sign in as qa@example.com / password
+```
+
+The imported realm (`dev/keycloak/realm-identity.json`) contains a SAML
+client for this service (signed responses and assertions, NameID = email)
+and the test user. Note: Keycloak issues Secure cookies even over http —
+browsers accept them on localhost (secure context), non-browser HTTP
+clients need to opt in.
+
 ## Configuration
 
 | Variable | Default (development) | Description |

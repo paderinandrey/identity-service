@@ -49,6 +49,25 @@ services:
       timeout: 5s
       retries: 12
 
+  # Local SAML IdP for SSO development; start with the "sso" profile:
+  #   docker compose --profile sso up -d   (or: mise run up-sso)
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7
+    profiles: [sso]
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./dev/keycloak:/opt/keycloak/data/import:ro
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
 volumes:
   postgres-data:
   redis-data:
