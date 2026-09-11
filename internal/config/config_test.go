@@ -185,3 +185,51 @@ func TestEventsConfig(t *testing.T) {
 		t.Errorf("override: %q, err = %v", cfg.EventsExchange, err)
 	}
 }
+
+func TestE2ELoginToken(t *testing.T) {
+	t.Setenv(EnvAppEnv, "development")
+
+	cfg, err := Load()
+	if err != nil || cfg.E2ELoginToken != "" {
+		t.Fatalf("without token: %q, err = %v", cfg.E2ELoginToken, err)
+	}
+
+	t.Setenv(EnvE2ELoginToken, "short")
+	if _, err := Load(); err == nil {
+		t.Error("short e2e token must fail startup")
+	}
+
+	long := strings.Repeat("e", 32)
+	t.Setenv(EnvE2ELoginToken, long)
+	cfg, err = Load()
+	if err != nil || cfg.E2ELoginToken != long {
+		t.Errorf("valid token in development: %q, err = %v", cfg.E2ELoginToken, err)
+	}
+}
+
+func TestE2ELoginTokenForbiddenInProduction(t *testing.T) {
+	t.Setenv(EnvAppEnv, "production")
+	t.Setenv(EnvDatabaseURL, "postgres://u:p@db:5432/identity")
+	t.Setenv(EnvRedisURL, "redis://cache:6379/0")
+	t.Setenv(EnvBaseURL, "https://id.example.com")
+	t.Setenv(EnvFrontendBaseURL, "https://app.example.com")
+	t.Setenv(EnvSAMLIdPMetadataURL, "https://example.okta.com/metadata")
+	t.Setenv(EnvRelayStateSecret, "s3cret")
+	t.Setenv(EnvRabbitMQURL, "amqp://mq:5672/")
+
+	if _, err := Load(); err != nil {
+		t.Fatalf("production baseline must load: %v", err)
+	}
+
+	t.Setenv(EnvE2ELoginToken, strings.Repeat("e", 32))
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), EnvE2ELoginToken) {
+		t.Errorf("production with e2e token: err = %v, want startup error naming the variable", err)
+	}
+
+	// Staging is a legitimate place for E2E suites.
+	t.Setenv(EnvAppEnv, "staging")
+	if _, err := Load(); err != nil {
+		t.Errorf("staging with e2e token must load: %v", err)
+	}
+}

@@ -162,6 +162,12 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 				samlService.Register(authMux)
 			}
 			authMux.Handle("POST /graphql", graphqlServer)
+			// Programmatic sessions for E2E suites; never in production
+			// (config guards the combination at startup).
+			if cfg.E2ELoginToken != "" {
+				session.RegisterE2ELogin(authMux, sessions, store, cfg.E2ELoginToken, logger)
+				logger.Info("E2E login endpoint enabled")
+			}
 			withSessions := sessions.Middleware(authMux)
 			mux.Handle("/auth/", withSessions)
 			mux.Handle("/internal/", withSessions)

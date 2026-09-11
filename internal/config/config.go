@@ -33,6 +33,7 @@ const (
 	EnvRabbitMQURL           = "RABBITMQ_URL"
 	EnvEventsExchange        = "EVENTS_EXCHANGE"
 	EnvSentryDSN             = "SENTRY_DSN"
+	EnvE2ELoginToken         = "E2E_LOGIN_TOKEN"
 )
 
 // Defaults are safe for local development only.
@@ -93,6 +94,10 @@ type Config struct {
 
 	// SentryDSN enables error reporting when non-empty.
 	SentryDSN string
+
+	// E2ELoginToken enables the programmatic test-login endpoint when
+	// non-empty. Must never be set in production.
+	E2ELoginToken string
 }
 
 // IsDevelopment reports whether the service runs in the development environment.
@@ -180,6 +185,14 @@ func Load() (Config, error) {
 	cfg.SCIMToken = os.Getenv(EnvSCIMToken)
 	if cfg.SCIMToken != "" && len(cfg.SCIMToken) < 32 {
 		return Config{}, fmt.Errorf("%s: token must be at least 32 characters", EnvSCIMToken)
+	}
+
+	cfg.E2ELoginToken = os.Getenv(EnvE2ELoginToken)
+	if cfg.E2ELoginToken != "" && len(cfg.E2ELoginToken) < 32 {
+		return Config{}, fmt.Errorf("%s: token must be at least 32 characters", EnvE2ELoginToken)
+	}
+	if cfg.E2ELoginToken != "" && cfg.AppEnv == "production" {
+		return Config{}, fmt.Errorf("%s must not be set in production", EnvE2ELoginToken)
 	}
 
 	if cfg.IsDevelopment() {
