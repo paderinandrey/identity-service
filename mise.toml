@@ -7,12 +7,12 @@ description = "Build the service binary into bin/"
 run = "go build -o bin/identity-service ./cmd/identity-service"
 
 [tasks.test]
-description = "Run all tests with the race detector"
-run = "go test -race ./..."
+description = "Run tests with the race detector; pass packages/flags after -- (default ./...)"
+run = 'go test -race {{arg(name="args", var=true, default="./...")}}'
 
 [tasks.lint]
-description = "Run golangci-lint"
-run = "golangci-lint run"
+description = "Run golangci-lint; pass paths/flags after --"
+run = 'golangci-lint run {{arg(name="args", var=true, default="")}}'
 
 [tasks.run]
 description = "Run the service locally"
