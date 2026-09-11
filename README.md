@@ -7,7 +7,9 @@ behind the shared GraphQL Router.
 
 Architecture decision record: `dev/notes/architecture/gsh-dfm-shared-ui-identity.md`
 (Obsidian vault, 2026-09-09). Requirements and planned work live in
-[`openspec/`](openspec/) — see `AGENTS.md` for the workflow.
+[`openspec/`](openspec/) — see `AGENTS.md` for the workflow. CI (GitHub
+Actions) runs lint, race tests against PostgreSQL/Redis/RabbitMQ services,
+govulncheck and a gqlgen drift check on every push and pull request.
 
 ## Status
 
