@@ -3,6 +3,25 @@
   "enabled": true,
   "sslRequired": "none",
   "registrationAllowed": false,
+  "eventsListeners": ["jboss-logging", "scim"],
+  "components": {
+    "org.keycloak.storage.UserStorageProvider": [
+      {
+        "name": "identity-service-scim",
+        "providerId": "scim",
+        "subComponents": {},
+        "config": {
+          "enabled": ["true"],
+          "endpoint": ["http://host.docker.internal:8080/scim/v2"],
+          "content-type": ["application/scim+json"],
+          "auth-mode": ["BEARER"],
+          "auth-pass": ["local-dev-scim-token-0123456789abcdef"],
+          "propagation-user": ["true"],
+          "propagation-group": ["false"]
+        }
+      }
+    ]
+  },
   "users": [
     {
       "username": "qa@example.com",

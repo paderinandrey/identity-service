@@ -52,8 +52,11 @@ services:
   # Local SAML IdP for SSO development; start with the "sso" profile:
   #   docker compose --profile sso up -d   (or: mise run up-sso)
   keycloak:
-    image: quay.io/keycloak/keycloak:26.7
+    build:
+      context: ./dev/keycloak
     profiles: [sso]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: ["start-dev", "--import-realm"]
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin

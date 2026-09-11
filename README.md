@@ -63,16 +63,27 @@ realm and point the service at it:
 
 ```bash
 mise run up-sso     # infrastructure + Keycloak on http://localhost:8081 (admin/admin)
-bin/identity-service create-user --email qa@example.com --name "QA User"
-SAML_IDP_METADATA_URL="http://localhost:8081/realms/identity/protocol/saml/descriptor" mise run run
+LISTEN_ADDR=":8080" SCIM_TOKEN="local-dev-scim-token-0123456789abcdef" SAML_IDP_METADATA_URL="http://localhost:8081/realms/identity/protocol/saml/descriptor"   mise run run
 open http://localhost:8080/auth/saml/init   # sign in as qa@example.com / password
 ```
 
 The imported realm (`dev/keycloak/realm-identity.json`) contains a SAML
-client for this service (signed responses and assertions, NameID = email)
-and the test user. Note: Keycloak issues Secure cookies even over http —
-browsers accept them on localhost (secure context), non-browser HTTP
-clients need to opt in.
+client for this service (signed responses and assertions, NameID = email),
+a `qa@example.com` / `password` test user, and — mirroring how Okta works
+in production — a SCIM outbound provider
+([mitodl/keycloak-scim](https://github.com/mitodl/keycloak-scim), baked
+into the image in `dev/keycloak/Dockerfile`): any user created, updated or
+deactivated in Keycloak is pushed to this service over SCIM with the dev
+token above (hence `SCIM_TOKEN` and `LISTEN_ADDR=:8080` — the Keycloak
+container reaches the host via host.docker.internal). Create users in the
+Keycloak admin console (or the bundled qa user) — they appear here with an
+`okta-scim` identity and a `user.created` outbox event, then sign in with
+their password. `create-user` CLI remains as a shortcut when Keycloak is
+not running.
+
+Note: Keycloak issues Secure cookies even over http — browsers accept
+them on localhost (secure context), non-browser HTTP clients need to opt
+in.
 
 ## Configuration
 
