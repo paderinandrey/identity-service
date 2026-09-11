@@ -194,10 +194,12 @@ func (w *testLogWriter) Write(p []byte) (int, error) {
 }
 
 type spEnv struct {
-	server *httptest.Server
-	store  *memStore
-	svc    *Service
-	client *http.Client
+	server  *httptest.Server
+	store   *memStore
+	svc     *Service
+	client  *http.Client
+	success int
+	failure int
 }
 
 func testRedis(t *testing.T) *redis.Client {
@@ -238,6 +240,8 @@ func newSPEnv(t *testing.T, idp *testIDP) *spEnv {
 	if err != nil {
 		t.Fatalf("samlsso.New: %v", err)
 	}
+	env := &spEnv{store: store}
+	svc.SetMetrics(countingSignIns{env})
 	svc.Register(mux)
 
 	session.NewHandlers(sessions, spUserSource{store}, nil).Register(mux)
@@ -249,8 +253,16 @@ func newSPEnv(t *testing.T, idp *testIDP) *spEnv {
 	}
 
 	jar, _ := cookiejar.New(nil)
-	return &spEnv{server: server, store: store, svc: svc, client: &http.Client{Jar: jar}}
+	env.server = server
+	env.svc = svc
+	env.client = &http.Client{Jar: jar}
+	return env
 }
+
+type countingSignIns struct{ e *spEnv }
+
+func (c countingSignIns) Success() { c.e.success++ }
+func (c countingSignIns) Failure() { c.e.failure++ }
 
 type spUserSource struct{ store *memStore }
 
@@ -412,6 +424,9 @@ func TestFullSignInFlow(t *testing.T) {
 	if me := e.me(t); me.StatusCode != http.StatusOK {
 		t.Errorf("me after login = %d, want 200", me.StatusCode)
 	}
+	if e.success != 1 || e.failure != 0 {
+		t.Errorf("sign-in counters = %d success / %d failure, want 1/0", e.success, e.failure)
+	}
 }
 
 func TestTamperedResponseRejected(t *testing.T) {
@@ -433,6 +448,9 @@ func TestTamperedResponseRejected(t *testing.T) {
 	resp := e.postACS(t, string(tampered), relay)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("tampered ACS = %d, want 401", resp.StatusCode)
+	}
+	if e.failure != 1 || e.success != 0 {
+		t.Errorf("sign-in counters = %d success / %d failure, want 0/1", e.success, e.failure)
 	}
 	if me := e.me(t); me.StatusCode != http.StatusUnauthorized {
 		t.Error("no session must exist after rejected response")

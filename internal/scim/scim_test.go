@@ -35,6 +35,7 @@ type env struct {
 	server   *httptest.Server
 	store    *postgres.Store
 	sessions *session.Manager
+	ops      map[string]int
 }
 
 func newEnv(t *testing.T) *env {
@@ -87,8 +88,11 @@ func newEnv(t *testing.T) *env {
 		MaxConcurrent: 10,
 	}, logger)
 
+	e := &env{store: store, sessions: sessions, ops: map[string]int{}}
 	mux := http.NewServeMux()
-	NewHandlers(store, sessions, scimToken, logger).Register(mux)
+	handlers := NewHandlers(store, sessions, scimToken, logger)
+	handlers.SetMetrics(opCounter{e.ops})
+	handlers.Register(mux)
 
 	// Session-side endpoints to observe session death after deactivation.
 	authMux := http.NewServeMux()
@@ -103,11 +107,14 @@ func newEnv(t *testing.T) *env {
 	mux.Handle("/auth/", sessions.Middleware(authMux))
 	mux.Handle("/test/", sessions.Middleware(authMux))
 
-	e := &env{store: store, sessions: sessions}
 	e.server = httptest.NewServer(mux)
 	t.Cleanup(e.server.Close)
 	return e
 }
+
+type opCounter struct{ ops map[string]int }
+
+func (c opCounter) Observe(op string) { c.ops[op]++ }
 
 type testUserSource struct{ store *postgres.Store }
 
@@ -359,6 +366,9 @@ func TestDeleteIsSoft(t *testing.T) {
 	}
 	if user.Active {
 		t.Error("user must be inactive after DELETE")
+	}
+	if e.ops["create"] != 1 || e.ops["delete"] != 1 || e.ops["deactivate"] != 1 {
+		t.Errorf("op counters = %v, want create/delete/deactivate counted", e.ops)
 	}
 }
 

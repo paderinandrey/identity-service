@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,6 +31,7 @@ type env struct {
 	exchange string
 	queue    string
 	channel  *amqp.Channel
+	metrics  *fakeRelayMetrics
 }
 
 func newEnv(t *testing.T) *env {
@@ -97,10 +99,33 @@ func newEnv(t *testing.T) *env {
 	return e
 }
 
+type fakeRelayMetrics struct {
+	mu        sync.Mutex
+	published int
+	errors    int
+	pending   int
+}
+
+func (m *fakeRelayMetrics) Published(n int) { m.mu.Lock(); m.published += n; m.mu.Unlock() }
+func (m *fakeRelayMetrics) PublishError()   { m.mu.Lock(); m.errors++; m.mu.Unlock() }
+func (m *fakeRelayMetrics) PendingSet(n int) {
+	m.mu.Lock()
+	m.pending = n
+	m.mu.Unlock()
+}
+
+func (m *fakeRelayMetrics) snapshot() (int, int, int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.published, m.errors, m.pending
+}
+
 func (e *env) runRelay(t *testing.T, url string) (stop func()) {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	relay := events.NewRelay(e.pool, url, e.exchange, logger)
+	e.metrics = &fakeRelayMetrics{}
+	relay.SetMetrics(e.metrics)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() {
@@ -170,6 +195,10 @@ func TestRelayDeliversWithProperties(t *testing.T) {
 	}
 
 	waitFor(t, 5*time.Second, func() bool { return e.unpublishedCount(t) == 0 })
+	waitFor(t, 5*time.Second, func() bool {
+		published, _, pending := e.metrics.snapshot()
+		return published == 1 && pending == 0
+	})
 }
 
 func TestRelayPreservesPerUserOrder(t *testing.T) {
