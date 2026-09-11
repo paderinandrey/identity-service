@@ -15,9 +15,9 @@ import (
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/introspection"
 	"github.com/99designs/gqlgen/plugin/federation/fedruntime"
+	"github.com/paderinandrey/identity-service/internal/graphql/model"
 	gqlparser "github.com/vektah/gqlparser/v2"
 	"github.com/vektah/gqlparser/v2/ast"
-	"github.com/paderinandrey/identity-service/internal/graphql/model"
 )
 
 // region    ***************************** api!.gotpl *****************************
@@ -1092,7 +1092,7 @@ func (ec *executionContext) _Application_roles(ctx context.Context, field graphq
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.Role) graphql.Marshaler {
-			return ec.marshalNRole2ᚕᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐRoleᚄ(ctx, selections, v)
+			return ec.marshalNRole2ᚕᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐRoleᚄ(ctx, selections, v)
 		},
 		true,
 		true,
@@ -1263,7 +1263,7 @@ func (ec *executionContext) _Entity_findUserByID(ctx context.Context, field grap
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.User) graphql.Marshaler {
-			return ec.marshalNUser2ᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐUser(ctx, selections, v)
+			return ec.marshalNUser2ᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐUser(ctx, selections, v)
 		},
 		true,
 		true,
@@ -1306,7 +1306,7 @@ func (ec *executionContext) _Me_user(ctx context.Context, field graphql.Collecte
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.User) graphql.Marshaler {
-			return ec.marshalNUser2ᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐUser(ctx, selections, v)
+			return ec.marshalNUser2ᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐUser(ctx, selections, v)
 		},
 		true,
 		true,
@@ -1362,7 +1362,7 @@ func (ec *executionContext) _Mutation_grantRole(ctx context.Context, field graph
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.User) graphql.Marshaler {
-			return ec.marshalNUser2ᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐUser(ctx, selections, v)
+			return ec.marshalNUser2ᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐUser(ctx, selections, v)
 		},
 		true,
 		true,
@@ -1406,7 +1406,7 @@ func (ec *executionContext) _Mutation_revokeRole(ctx context.Context, field grap
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.User) graphql.Marshaler {
-			return ec.marshalNUser2ᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐUser(ctx, selections, v)
+			return ec.marshalNUser2ᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐUser(ctx, selections, v)
 		},
 		true,
 		true,
@@ -1449,7 +1449,7 @@ func (ec *executionContext) _Query_me(ctx context.Context, field graphql.Collect
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.Me) graphql.Marshaler {
-			return ec.marshalNMe2ᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐMe(ctx, selections, v)
+			return ec.marshalNMe2ᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐMe(ctx, selections, v)
 		},
 		true,
 		true,
@@ -1482,7 +1482,7 @@ func (ec *executionContext) _Query_users(ctx context.Context, field graphql.Coll
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.User) graphql.Marshaler {
-			return ec.marshalNUser2ᚕᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐUserᚄ(ctx, selections, v)
+			return ec.marshalNUser2ᚕᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐUserᚄ(ctx, selections, v)
 		},
 		true,
 		true,
@@ -1526,7 +1526,7 @@ func (ec *executionContext) _Query_user(ctx context.Context, field graphql.Colle
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *model.User) graphql.Marshaler {
-			return ec.marshalOUser2ᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐUser(ctx, selections, v)
+			return ec.marshalOUser2ᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐUser(ctx, selections, v)
 		},
 		true,
 		false,
@@ -1569,7 +1569,7 @@ func (ec *executionContext) _Query_applications(ctx context.Context, field graph
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.Application) graphql.Marshaler {
-			return ec.marshalNApplication2ᚕᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐApplicationᚄ(ctx, selections, v)
+			return ec.marshalNApplication2ᚕᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐApplicationᚄ(ctx, selections, v)
 		},
 		true,
 		true,
@@ -1602,7 +1602,7 @@ func (ec *executionContext) _Query_accessAuditLog(ctx context.Context, field gra
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.AuditEntry) graphql.Marshaler {
-			return ec.marshalNAuditEntry2ᚕᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐAuditEntryᚄ(ctx, selections, v)
+			return ec.marshalNAuditEntry2ᚕᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐAuditEntryᚄ(ctx, selections, v)
 		},
 		true,
 		true,
@@ -2073,7 +2073,7 @@ func (ec *executionContext) _User_roles(ctx context.Context, field graphql.Colle
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v []*model.RoleAssignment) graphql.Marshaler {
-			return ec.marshalNRoleAssignment2ᚕᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐRoleAssignmentᚄ(ctx, selections, v)
+			return ec.marshalNRoleAssignment2ᚕᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐRoleAssignmentᚄ(ctx, selections, v)
 		},
 		true,
 		true,
@@ -4310,11 +4310,11 @@ func (ec *executionContext) ___Type(ctx context.Context, sel ast.SelectionSet, o
 
 // region    ***************************** type.gotpl *****************************
 
-func (ec *executionContext) marshalNApplication2ᚕᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐApplicationᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.Application) graphql.Marshaler {
+func (ec *executionContext) marshalNApplication2ᚕᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐApplicationᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.Application) graphql.Marshaler {
 	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
 		fc := graphql.GetFieldContext(ctx)
 		fc.Result = &v[i]
-		return ec.marshalNApplication2ᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐApplication(ctx, sel, v[i])
+		return ec.marshalNApplication2ᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐApplication(ctx, sel, v[i])
 	})
 
 	for _, e := range ret {
@@ -4326,7 +4326,7 @@ func (ec *executionContext) marshalNApplication2ᚕᚖgithubᚗcomᚋxometryᚑe
 	return ret
 }
 
-func (ec *executionContext) marshalNApplication2ᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐApplication(ctx context.Context, sel ast.SelectionSet, v *model.Application) graphql.Marshaler {
+func (ec *executionContext) marshalNApplication2ᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐApplication(ctx context.Context, sel ast.SelectionSet, v *model.Application) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
 			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
@@ -4336,11 +4336,11 @@ func (ec *executionContext) marshalNApplication2ᚖgithubᚗcomᚋxometryᚑeuro
 	return ec._Application(ctx, sel, v)
 }
 
-func (ec *executionContext) marshalNAuditEntry2ᚕᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐAuditEntryᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.AuditEntry) graphql.Marshaler {
+func (ec *executionContext) marshalNAuditEntry2ᚕᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐAuditEntryᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.AuditEntry) graphql.Marshaler {
 	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
 		fc := graphql.GetFieldContext(ctx)
 		fc.Result = &v[i]
-		return ec.marshalNAuditEntry2ᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐAuditEntry(ctx, sel, v[i])
+		return ec.marshalNAuditEntry2ᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐAuditEntry(ctx, sel, v[i])
 	})
 
 	for _, e := range ret {
@@ -4352,7 +4352,7 @@ func (ec *executionContext) marshalNAuditEntry2ᚕᚖgithubᚗcomᚋxometryᚑeu
 	return ret
 }
 
-func (ec *executionContext) marshalNAuditEntry2ᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐAuditEntry(ctx context.Context, sel ast.SelectionSet, v *model.AuditEntry) graphql.Marshaler {
+func (ec *executionContext) marshalNAuditEntry2ᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐAuditEntry(ctx context.Context, sel ast.SelectionSet, v *model.AuditEntry) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
 			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
@@ -4426,7 +4426,7 @@ func (ec *executionContext) marshalNInt2int(ctx context.Context, sel ast.Selecti
 	return res
 }
 
-func (ec *executionContext) marshalNMe2ᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐMe(ctx context.Context, sel ast.SelectionSet, v *model.Me) graphql.Marshaler {
+func (ec *executionContext) marshalNMe2ᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐMe(ctx context.Context, sel ast.SelectionSet, v *model.Me) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
 			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
@@ -4436,11 +4436,11 @@ func (ec *executionContext) marshalNMe2ᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbh
 	return ec._Me(ctx, sel, v)
 }
 
-func (ec *executionContext) marshalNRole2ᚕᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐRoleᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.Role) graphql.Marshaler {
+func (ec *executionContext) marshalNRole2ᚕᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐRoleᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.Role) graphql.Marshaler {
 	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
 		fc := graphql.GetFieldContext(ctx)
 		fc.Result = &v[i]
-		return ec.marshalNRole2ᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐRole(ctx, sel, v[i])
+		return ec.marshalNRole2ᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐRole(ctx, sel, v[i])
 	})
 
 	for _, e := range ret {
@@ -4452,7 +4452,7 @@ func (ec *executionContext) marshalNRole2ᚕᚖgithubᚗcomᚋxometryᚑeurope�
 	return ret
 }
 
-func (ec *executionContext) marshalNRole2ᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐRole(ctx context.Context, sel ast.SelectionSet, v *model.Role) graphql.Marshaler {
+func (ec *executionContext) marshalNRole2ᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐRole(ctx context.Context, sel ast.SelectionSet, v *model.Role) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
 			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
@@ -4462,11 +4462,11 @@ func (ec *executionContext) marshalNRole2ᚖgithubᚗcomᚋxometryᚑeuropeᚑgm
 	return ec._Role(ctx, sel, v)
 }
 
-func (ec *executionContext) marshalNRoleAssignment2ᚕᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐRoleAssignmentᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.RoleAssignment) graphql.Marshaler {
+func (ec *executionContext) marshalNRoleAssignment2ᚕᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐRoleAssignmentᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.RoleAssignment) graphql.Marshaler {
 	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
 		fc := graphql.GetFieldContext(ctx)
 		fc.Result = &v[i]
-		return ec.marshalNRoleAssignment2ᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐRoleAssignment(ctx, sel, v[i])
+		return ec.marshalNRoleAssignment2ᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐRoleAssignment(ctx, sel, v[i])
 	})
 
 	for _, e := range ret {
@@ -4478,7 +4478,7 @@ func (ec *executionContext) marshalNRoleAssignment2ᚕᚖgithubᚗcomᚋxometry�
 	return ret
 }
 
-func (ec *executionContext) marshalNRoleAssignment2ᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐRoleAssignment(ctx context.Context, sel ast.SelectionSet, v *model.RoleAssignment) graphql.Marshaler {
+func (ec *executionContext) marshalNRoleAssignment2ᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐRoleAssignment(ctx context.Context, sel ast.SelectionSet, v *model.RoleAssignment) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
 			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
@@ -4549,11 +4549,11 @@ func (ec *executionContext) marshalNTime2timeᚐTime(ctx context.Context, sel as
 	return res
 }
 
-func (ec *executionContext) marshalNUser2ᚕᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐUserᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.User) graphql.Marshaler {
+func (ec *executionContext) marshalNUser2ᚕᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐUserᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.User) graphql.Marshaler {
 	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
 		fc := graphql.GetFieldContext(ctx)
 		fc.Result = &v[i]
-		return ec.marshalNUser2ᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐUser(ctx, sel, v[i])
+		return ec.marshalNUser2ᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐUser(ctx, sel, v[i])
 	})
 
 	for _, e := range ret {
@@ -4565,7 +4565,7 @@ func (ec *executionContext) marshalNUser2ᚕᚖgithubᚗcomᚋxometryᚑeurope�
 	return ret
 }
 
-func (ec *executionContext) marshalNUser2ᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐUser(ctx context.Context, sel ast.SelectionSet, v *model.User) graphql.Marshaler {
+func (ec *executionContext) marshalNUser2ᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐUser(ctx context.Context, sel ast.SelectionSet, v *model.User) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
 			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
@@ -5059,7 +5059,7 @@ func (ec *executionContext) marshalOTime2ᚖtimeᚐTime(ctx context.Context, sel
 	return res
 }
 
-func (ec *executionContext) marshalOUser2ᚖgithubᚗcomᚋxometryᚑeuropeᚑgmbhᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐUser(ctx context.Context, sel ast.SelectionSet, v *model.User) graphql.Marshaler {
+func (ec *executionContext) marshalOUser2ᚖgithubᚗcomᚋpaderinandreyᚋidentityᚑserviceᚋinternalᚋgraphqlᚋmodelᚐUser(ctx context.Context, sel ast.SelectionSet, v *model.User) graphql.Marshaler {
 	if v == nil {
 		return graphql.Null
 	}
