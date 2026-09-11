@@ -5,7 +5,7 @@ package events
 import (
 	"time"
 
-	"github.com/xometry-europe-gmbh/identity-service/internal/identity"
+	"github.com/paderinandrey/identity-service/internal/identity"
 )
 
 // Event types (also used as AMQP routing keys without the "identity." prefix).

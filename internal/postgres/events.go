@@ -6,8 +6,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/xometry-europe-gmbh/identity-service/internal/events"
-	"github.com/xometry-europe-gmbh/identity-service/internal/identity"
+	"github.com/paderinandrey/identity-service/internal/events"
+	"github.com/paderinandrey/identity-service/internal/identity"
 )
 
 // recordUserEvent writes an outbox event within the change transaction.

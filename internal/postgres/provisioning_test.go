@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/xometry-europe-gmbh/identity-service/internal/identity"
+	"github.com/paderinandrey/identity-service/internal/identity"
 )
 
 func TestProvisioningStore(t *testing.T) {

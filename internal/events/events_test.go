@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xometry-europe-gmbh/identity-service/internal/identity"
+	"github.com/paderinandrey/identity-service/internal/identity"
 )
 
 func TestTypeForActivation(t *testing.T) {

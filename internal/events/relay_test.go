@@ -14,8 +14,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	amqp "github.com/rabbitmq/amqp091-go"
 
-	"github.com/xometry-europe-gmbh/identity-service/internal/events"
-	"github.com/xometry-europe-gmbh/identity-service/internal/postgres"
+	"github.com/paderinandrey/identity-service/internal/events"
+	"github.com/paderinandrey/identity-service/internal/postgres"
 )
 
 const (

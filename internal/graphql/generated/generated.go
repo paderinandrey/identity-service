@@ -17,7 +17,7 @@ import (
 	"github.com/99designs/gqlgen/plugin/federation/fedruntime"
 	gqlparser "github.com/vektah/gqlparser/v2"
 	"github.com/vektah/gqlparser/v2/ast"
-	"github.com/xometry-europe-gmbh/identity-service/internal/graphql/model"
+	"github.com/paderinandrey/identity-service/internal/graphql/model"
 )
 
 // region    ***************************** api!.gotpl *****************************

@@ -8,9 +8,9 @@ import (
 	"context"
 	"errors"
 
-	"github.com/xometry-europe-gmbh/identity-service/internal/graphql/generated"
-	"github.com/xometry-europe-gmbh/identity-service/internal/graphql/model"
-	"github.com/xometry-europe-gmbh/identity-service/internal/identity"
+	"github.com/paderinandrey/identity-service/internal/graphql/generated"
+	"github.com/paderinandrey/identity-service/internal/graphql/model"
+	"github.com/paderinandrey/identity-service/internal/identity"
 )
 
 // FindUserByID is the resolver for the findUserByID field.

@@ -8,7 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/xometry-europe-gmbh/identity-service/internal/access"
+	"github.com/paderinandrey/identity-service/internal/access"
 )
 
 // AccessStore implements access.Store on PostgreSQL. Every mutation writes

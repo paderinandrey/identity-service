@@ -8,8 +8,8 @@ import (
 
 	"github.com/vektah/gqlparser/v2/gqlerror"
 
-	"github.com/xometry-europe-gmbh/identity-service/internal/identity"
-	"github.com/xometry-europe-gmbh/identity-service/internal/session"
+	"github.com/paderinandrey/identity-service/internal/identity"
+	"github.com/paderinandrey/identity-service/internal/session"
 )
 
 // ManagePermission guards access-management mutations and the audit log.

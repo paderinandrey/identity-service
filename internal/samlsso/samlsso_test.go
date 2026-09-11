@@ -24,8 +24,8 @@ import (
 	"github.com/crewjam/saml"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/xometry-europe-gmbh/identity-service/internal/identity"
-	"github.com/xometry-europe-gmbh/identity-service/internal/session"
+	"github.com/paderinandrey/identity-service/internal/identity"
+	"github.com/paderinandrey/identity-service/internal/session"
 )
 
 // --- in-memory identity.Store ---

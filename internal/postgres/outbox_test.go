@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/xometry-europe-gmbh/identity-service/internal/events"
+	"github.com/paderinandrey/identity-service/internal/events"
 )
 
 type outboxEntry struct {

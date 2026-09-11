@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/xometry-europe-gmbh/identity-service/internal/identity"
+	"github.com/paderinandrey/identity-service/internal/identity"
 )
 
 // Internal response headers consumed by the entry-point proxy.

@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/xometry-europe-gmbh/identity-service/internal/access"
-	"github.com/xometry-europe-gmbh/identity-service/internal/identity"
+	"github.com/paderinandrey/identity-service/internal/access"
+	"github.com/paderinandrey/identity-service/internal/identity"
 )
 
 func seedConfig() access.SeedConfig {

@@ -18,10 +18,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/xometry-europe-gmbh/identity-service/internal/access"
-	"github.com/xometry-europe-gmbh/identity-service/internal/identity"
-	"github.com/xometry-europe-gmbh/identity-service/internal/postgres"
-	"github.com/xometry-europe-gmbh/identity-service/internal/session"
+	"github.com/paderinandrey/identity-service/internal/access"
+	"github.com/paderinandrey/identity-service/internal/identity"
+	"github.com/paderinandrey/identity-service/internal/postgres"
+	"github.com/paderinandrey/identity-service/internal/session"
 )
 
 const (

@@ -14,10 +14,10 @@ import (
 	"github.com/99designs/gqlgen/graphql/handler/extension"
 	"github.com/99designs/gqlgen/graphql/handler/transport"
 
-	"github.com/xometry-europe-gmbh/identity-service/internal/access"
-	"github.com/xometry-europe-gmbh/identity-service/internal/graphql/generated"
-	"github.com/xometry-europe-gmbh/identity-service/internal/identity"
-	"github.com/xometry-europe-gmbh/identity-service/internal/session"
+	"github.com/paderinandrey/identity-service/internal/access"
+	"github.com/paderinandrey/identity-service/internal/graphql/generated"
+	"github.com/paderinandrey/identity-service/internal/identity"
+	"github.com/paderinandrey/identity-service/internal/session"
 )
 
 // Server-side caps against accidental full-directory dumps.

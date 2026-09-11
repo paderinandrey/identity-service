@@ -7,8 +7,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/xometry-europe-gmbh/identity-service/internal/events"
-	"github.com/xometry-europe-gmbh/identity-service/internal/identity"
+	"github.com/paderinandrey/identity-service/internal/events"
+	"github.com/paderinandrey/identity-service/internal/identity"
 )
 
 const uniqueViolation = "23505"

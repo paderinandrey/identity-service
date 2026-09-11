@@ -15,7 +15,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/xometry-europe-gmbh/identity-service/internal/identity"
+	"github.com/paderinandrey/identity-service/internal/identity"
 )
 
 const cookieName = "__identity_session_test"

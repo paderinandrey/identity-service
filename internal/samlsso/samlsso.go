@@ -17,8 +17,8 @@ import (
 	"github.com/crewjam/saml"
 	"github.com/crewjam/saml/samlsp"
 
-	"github.com/xometry-europe-gmbh/identity-service/internal/identity"
-	"github.com/xometry-europe-gmbh/identity-service/internal/session"
+	"github.com/paderinandrey/identity-service/internal/identity"
+	"github.com/paderinandrey/identity-service/internal/session"
 )
 
 const (

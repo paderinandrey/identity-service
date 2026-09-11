@@ -10,7 +10,7 @@ import (
 	// Blank import wires pgx into database/sql for goose.
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"github.com/xometry-europe-gmbh/identity-service/db"
+	"github.com/paderinandrey/identity-service/db"
 )
 
 // Migrate applies all pending schema migrations embedded in the binary.

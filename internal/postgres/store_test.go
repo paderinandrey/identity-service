@@ -13,8 +13,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pressly/goose/v3"
 
-	"github.com/xometry-europe-gmbh/identity-service/db"
-	"github.com/xometry-europe-gmbh/identity-service/internal/identity"
+	"github.com/paderinandrey/identity-service/db"
+	"github.com/paderinandrey/identity-service/internal/identity"
 )
 
 const (
