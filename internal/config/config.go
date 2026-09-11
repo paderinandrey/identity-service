@@ -32,6 +32,7 @@ const (
 	EnvSCIMToken             = "SCIM_TOKEN"
 	EnvRabbitMQURL           = "RABBITMQ_URL"
 	EnvEventsExchange        = "EVENTS_EXCHANGE"
+	EnvSentryDSN             = "SENTRY_DSN"
 )
 
 // Defaults are safe for local development only.
@@ -89,6 +90,9 @@ type Config struct {
 
 	RabbitMQURL    string
 	EventsExchange string
+
+	// SentryDSN enables error reporting when non-empty.
+	SentryDSN string
 }
 
 // IsDevelopment reports whether the service runs in the development environment.
@@ -170,6 +174,8 @@ func Load() (Config, error) {
 	if cfg.EventsExchange == "" {
 		cfg.EventsExchange = DefaultEventsExchange
 	}
+
+	cfg.SentryDSN = os.Getenv(EnvSentryDSN)
 
 	cfg.SCIMToken = os.Getenv(EnvSCIMToken)
 	if cfg.SCIMToken != "" && len(cfg.SCIMToken) < 32 {

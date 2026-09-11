@@ -97,15 +97,21 @@ func Resolve(ctx context.Context, store Store, provider, subject, email string) 
 	return user, nil
 }
 
+// CacheMetrics observes cache lookups; nil disables instrumentation.
+type CacheMetrics interface {
+	Observe(hit bool)
+}
+
 // ActiveChecker caches the user's active flag for a bounded revocation delay,
 // so per-request session validation does not hit PostgreSQL every time.
 type ActiveChecker struct {
 	store Store
 	ttl   time.Duration
 
-	mu    sync.Mutex
-	cache map[string]activeEntry
-	now   func() time.Time
+	mu      sync.Mutex
+	cache   map[string]activeEntry
+	now     func() time.Time
+	metrics CacheMetrics
 }
 
 type activeEntry struct {
@@ -123,12 +129,19 @@ func NewActiveChecker(store Store, ttl time.Duration) *ActiveChecker {
 	}
 }
 
+// SetMetrics attaches cache instrumentation.
+func (c *ActiveChecker) SetMetrics(m CacheMetrics) { c.metrics = m }
+
 // IsActive reports whether the user is currently active, at most ttl stale.
 func (c *ActiveChecker) IsActive(ctx context.Context, userID string) (bool, error) {
 	c.mu.Lock()
 	entry, ok := c.cache[userID]
 	c.mu.Unlock()
-	if ok && c.now().Before(entry.expires) {
+	hit := ok && c.now().Before(entry.expires)
+	if c.metrics != nil {
+		c.metrics.Observe(hit)
+	}
+	if hit {
 		return entry.active, nil
 	}
 

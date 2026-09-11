@@ -18,8 +18,9 @@ profiles and access management, health/readiness endpoints and the internal
 session-validation endpoint for the entry-point proxy.
 
 Also implemented: SCIM 2.0 provisioning from Okta (create/update/deactivate
-with immediate session revocation) and user-change events delivered to
-RabbitMQ through a transactional outbox.
+with immediate session revocation), user-change events delivered to RabbitMQ
+through a transactional outbox, and observability (Sentry error reporting,
+Prometheus metrics, panic recovery).
 
 Planned as separate OpenSpec changes: Single Logout, GraphQL Router
 integration.
@@ -76,6 +77,7 @@ the SAML flow against an in-process mock IdP, no Okta needed.
 | `SCIM_TOKEN` | — (SCIM disabled) | Bearer token for the Okta SCIM client (min 32 chars) |
 | `RABBITMQ_URL` | compose broker on `localhost:5673` | RabbitMQ connection string (user events) |
 | `EVENTS_EXCHANGE` | `identity.events` | Topic exchange for user-change events |
+| `SENTRY_DSN` | — (Sentry disabled) | Error-reporting DSN; panics and error-level logs become issues |
 
 Outside development the connection strings, URLs and secrets are required;
 missing ones fail startup with an explicit list. Invalid values fail startup
@@ -179,6 +181,19 @@ AMQP `message_id` (equal to `id`). Delivery is at-least-once; events survive
 broker outages and service restarts in the outbox. `replay-users` enqueues
 `user.snapshot` events for every user to bootstrap or repair a projection.
 The broker is deliberately excluded from `/readyz`.
+
+## Observability
+
+- Logs are JSONL on stdout (`log/slog`). With `SENTRY_DSN` set, error-level
+  records and handler panics are additionally reported to Sentry as issues
+  (environment = `APP_ENV`); panics always return 500 and never kill the
+  process.
+- `GET /internal/metrics` serves Prometheus metrics (internal zone, same as
+  the validate endpoint): standard Go/process collectors,
+  `http_request_duration_seconds` / `http_requests_total` by route pattern,
+  `outbox_pending` / `events_published_total` / `event_publish_errors_total`,
+  `sign_ins_total{result}`, `scim_operations_total{op}` and
+  `cache_requests_total{cache,result}` for the permissions/active caches.
 
 ## Docker
 

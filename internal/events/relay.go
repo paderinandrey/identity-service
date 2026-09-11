@@ -19,6 +19,14 @@ const (
 	publishTimeout = 5 * time.Second
 )
 
+// Metrics counts relay activity; implementations must be nil-safe to
+// omit (a nil Metrics disables instrumentation).
+type Metrics interface {
+	Published(n int)
+	PublishError()
+	PendingSet(n int)
+}
+
 // Relay drains the transactional outbox into a durable topic exchange.
 // It reconnects with bounded backoff; the outbox preserves events across
 // broker outages and service restarts. Run one instance per deployment to
@@ -32,12 +40,16 @@ type Relay struct {
 
 	conn    *amqp.Connection
 	channel *amqp.Channel
+	metrics Metrics
 }
 
 // NewRelay builds an outbox publisher.
 func NewRelay(pool *pgxpool.Pool, url, exchange string, logger *slog.Logger) *Relay {
 	return &Relay{pool: pool, url: url, exchange: exchange, logger: logger}
 }
+
+// SetMetrics attaches instrumentation; call before Run.
+func (r *Relay) SetMetrics(m Metrics) { r.metrics = m }
 
 // Run publishes pending events until ctx is done.
 func (r *Relay) Run(ctx context.Context) {
@@ -176,6 +188,13 @@ func (r *Relay) drainOnce(ctx context.Context) (int, error) {
 	if err := tx.Commit(ctx); err != nil {
 		return 0, err
 	}
+	if r.metrics != nil {
+		r.metrics.Published(published)
+		if publishErr != nil {
+			r.metrics.PublishError()
+		}
+		r.updatePendingGauge(ctx)
+	}
 	if publishErr != nil {
 		return published, publishErr
 	}
@@ -183,6 +202,14 @@ func (r *Relay) drainOnce(ctx context.Context) (int, error) {
 		r.logger.Info("published user events", "count", published)
 	}
 	return published, nil
+}
+
+func (r *Relay) updatePendingGauge(ctx context.Context) {
+	var pending int
+	if err := r.pool.QueryRow(ctx,
+		"SELECT count(*) FROM user_events_outbox WHERE published_at IS NULL").Scan(&pending); err == nil {
+		r.metrics.PendingSet(pending)
+	}
 }
 
 func markFailed(ctx context.Context, tx pgx.Tx, id string, cause error) error {

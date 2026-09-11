@@ -129,15 +129,21 @@ func SplitRoleRef(ref string) (app, role string, err error) {
 	return app, role, nil
 }
 
+// CacheMetrics observes cache lookups; nil disables instrumentation.
+type CacheMetrics interface {
+	Observe(hit bool)
+}
+
 // PermissionsCache caches effective permissions for a bounded revocation
 // delay, mirroring identity.ActiveChecker.
 type PermissionsCache struct {
 	store Store
 	ttl   time.Duration
 
-	mu    sync.Mutex
-	cache map[string]permsEntry
-	now   func() time.Time
+	mu      sync.Mutex
+	cache   map[string]permsEntry
+	now     func() time.Time
+	metrics CacheMetrics
 }
 
 type permsEntry struct {
@@ -155,12 +161,19 @@ func NewPermissionsCache(store Store, ttl time.Duration) *PermissionsCache {
 	}
 }
 
+// SetMetrics attaches cache instrumentation.
+func (c *PermissionsCache) SetMetrics(m CacheMetrics) { c.metrics = m }
+
 // EffectivePermissions returns the user's permissions, at most ttl stale.
 func (c *PermissionsCache) EffectivePermissions(ctx context.Context, userID string) ([]string, error) {
 	c.mu.Lock()
 	entry, ok := c.cache[userID]
 	c.mu.Unlock()
-	if ok && c.now().Before(entry.expires) {
+	hit := ok && c.now().Before(entry.expires)
+	if c.metrics != nil {
+		c.metrics.Observe(hit)
+	}
+	if hit {
 		return entry.perms, nil
 	}
 

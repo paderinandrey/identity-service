@@ -48,6 +48,11 @@ type UserStore interface {
 	IdentitySubject(ctx context.Context, userID, provider string) (string, error)
 }
 
+// OpMetrics counts provisioning operations; nil disables instrumentation.
+type OpMetrics interface {
+	Observe(op string)
+}
+
 // SessionKiller revokes all sessions of a user on deactivation.
 type SessionKiller interface {
 	DestroyAllForUser(ctx context.Context, userID string) error
@@ -59,6 +64,7 @@ type Handlers struct {
 	sessions  SessionKiller
 	tokenHash [32]byte
 	logger    *slog.Logger
+	metrics   OpMetrics
 }
 
 // NewHandlers builds SCIM handlers guarded by the bearer token.
@@ -68,6 +74,15 @@ func NewHandlers(store UserStore, sessions SessionKiller, token string, logger *
 		sessions:  sessions,
 		tokenHash: sha256.Sum256([]byte(token)),
 		logger:    logger,
+	}
+}
+
+// SetMetrics attaches operation instrumentation.
+func (h *Handlers) SetMetrics(m OpMetrics) { h.metrics = m }
+
+func (h *Handlers) countOp(op string) {
+	if h.metrics != nil {
+		h.metrics.Observe(op)
 	}
 }
 
@@ -252,6 +267,7 @@ func (h *Handlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.logger.Info("scim user created", "user_id", user.ID)
+	h.countOp("create")
 	writeJSON(w, http.StatusCreated, h.resource(ctx, user))
 }
 
@@ -294,6 +310,7 @@ func (h *Handlers) handleReplace(w http.ResponseWriter, r *http.Request) {
 		h.writeApplyError(w, err)
 		return
 	}
+	h.countOp("replace")
 	writeJSON(w, http.StatusOK, h.resource(ctx, updated))
 }
 
@@ -347,6 +364,7 @@ func (h *Handlers) handlePatch(w http.ResponseWriter, r *http.Request) {
 		h.writeApplyError(w, err)
 		return
 	}
+	h.countOp("patch")
 	writeJSON(w, http.StatusOK, h.resource(ctx, updated))
 }
 
@@ -426,6 +444,7 @@ func (h *Handlers) handleDelete(w http.ResponseWriter, r *http.Request) {
 		h.internalError(w, err)
 		return
 	}
+	h.countOp("delete")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -477,6 +496,7 @@ func (h *Handlers) deactivate(ctx context.Context, userID string) error {
 		h.logger.Error("failed to destroy sessions on deactivation", "error", err, "user_id", userID)
 	}
 	h.logger.Info("scim user deactivated", "user_id", userID)
+	h.countOp("deactivate")
 	return nil
 }
 
@@ -485,6 +505,7 @@ func (h *Handlers) reactivate(ctx context.Context, userID string) error {
 		return err
 	}
 	h.logger.Info("scim user reactivated", "user_id", userID)
+	h.countOp("reactivate")
 	return nil
 }
 

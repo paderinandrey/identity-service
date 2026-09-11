@@ -39,6 +39,12 @@ type Config struct {
 	MetadataHTTPClient *http.Client // optional, defaults to a 10s-timeout client
 }
 
+// SignInMetrics counts sign-in outcomes; nil disables instrumentation.
+type SignInMetrics interface {
+	Success()
+	Failure()
+}
+
 // Service owns the SP state and HTTP handlers of the SAML flow.
 type Service struct {
 	acsURL      url.URL
@@ -51,6 +57,7 @@ type Service struct {
 	store       identity.Store
 	sessions    *session.Manager
 	logger      *slog.Logger
+	metrics     SignInMetrics
 }
 
 // New fetches IdP metadata (fail-fast) and builds the service.
@@ -96,6 +103,20 @@ func New(ctx context.Context, cfg Config, store identity.Store, sessions *sessio
 	saml.MaxClockSkew = clockSkew
 
 	return s, nil
+}
+
+// SetMetrics attaches sign-in instrumentation.
+func (s *Service) SetMetrics(m SignInMetrics) { s.metrics = m }
+
+func (s *Service) countSignIn(success bool) {
+	if s.metrics == nil {
+		return
+	}
+	if success {
+		s.metrics.Success()
+	} else {
+		s.metrics.Failure()
+	}
 }
 
 // RefreshMetadataLoop re-fetches IdP metadata until ctx is done. Failures
@@ -172,6 +193,7 @@ func (s *Service) handleACS(w http.ResponseWriter, r *http.Request) {
 	assertion, err := sp.ParseResponse(r, nil)
 	if err != nil {
 		s.logSAMLError(err)
+		s.countSignIn(false)
 		http.Error(w, "SAML validation failed", http.StatusUnauthorized)
 		return
 	}
@@ -182,6 +204,7 @@ func (s *Service) handleACS(w http.ResponseWriter, r *http.Request) {
 	}
 	if subject == "" {
 		s.logger.Warn("SAML assertion without NameID")
+		s.countSignIn(false)
 		http.Error(w, "SAML validation failed", http.StatusUnauthorized)
 		return
 	}
@@ -190,6 +213,7 @@ func (s *Service) handleACS(w http.ResponseWriter, r *http.Request) {
 	// dedicated stable userId attribute (open question in the design).
 	user, err := identity.Resolve(r.Context(), s.store, identity.ProviderOkta, subject, subject)
 	if errors.Is(err, identity.ErrUserNotFound) {
+		s.countSignIn(false)
 		http.Error(w, "user not found", http.StatusUnauthorized)
 		return
 	}
@@ -208,6 +232,7 @@ func (s *Service) handleACS(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("failed to record last sign-in", "error", err)
 	}
 	s.logger.Info("user signed in", "user_id", user.ID)
+	s.countSignIn(true)
 
 	http.Redirect(w, r, s.frontendRedirectURL(s.relay.Decode(r.PostFormValue("RelayState"))), http.StatusFound)
 }

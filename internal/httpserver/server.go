@@ -24,6 +24,12 @@ func WithRoutes(register func(mux *http.ServeMux)) Option {
 	return func(s *Server) { s.registerRoutes = register }
 }
 
+// WithWrapper wraps the whole router (middleware such as panic recovery
+// and metrics), applied outside route matching.
+func WithWrapper(wrap func(http.Handler) http.Handler) Option {
+	return func(s *Server) { s.wrapper = wrap }
+}
+
 // Server wraps http.Server with readiness state and graceful shutdown.
 type Server struct {
 	httpServer      *http.Server
@@ -32,6 +38,7 @@ type Server struct {
 	ready           atomic.Bool
 	readyCheck      func(context.Context) error
 	registerRoutes  func(mux *http.ServeMux)
+	wrapper         func(http.Handler) http.Handler
 }
 
 // New builds a Server listening on addr.
@@ -57,6 +64,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /readyz", s.handleReadyz)
 	if s.registerRoutes != nil {
 		s.registerRoutes(mux)
+	}
+	if s.wrapper != nil {
+		return s.wrapper(mux)
 	}
 	return mux
 }

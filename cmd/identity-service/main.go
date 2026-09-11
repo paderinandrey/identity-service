@@ -29,6 +29,7 @@ import (
 	"github.com/xometry-europe-gmbh/identity-service/internal/httpserver"
 	"github.com/xometry-europe-gmbh/identity-service/internal/identity"
 	"github.com/xometry-europe-gmbh/identity-service/internal/logging"
+	"github.com/xometry-europe-gmbh/identity-service/internal/observability"
 	"github.com/xometry-europe-gmbh/identity-service/internal/postgres"
 	"github.com/xometry-europe-gmbh/identity-service/internal/samlsso"
 	"github.com/xometry-europe-gmbh/identity-service/internal/scim"
@@ -80,6 +81,16 @@ func run() error {
 }
 
 func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
+	obs, err := observability.Init(observability.Config{
+		SentryDSN:   cfg.SentryDSN,
+		Environment: cfg.AppEnv,
+	})
+	if err != nil {
+		return err
+	}
+	defer obs.Shutdown()
+	logger = slog.New(obs.LogHandler(logger.Handler()))
+
 	logger.Info("starting identity-service", "env", cfg.AppEnv, "addr", cfg.ListenAddr)
 
 	pool, err := postgres.Connect(ctx, cfg.DatabaseURL)
@@ -106,11 +117,11 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}, logger)
 
 	accessStore := postgres.NewAccessStore(pool)
-	users := &userSource{
-		store:   store,
-		checker: identity.NewActiveChecker(store, cfg.UserRevocationDelay),
-		perms:   access.NewPermissionsCache(accessStore, cfg.PermissionsCacheTTL),
-	}
+	checker := identity.NewActiveChecker(store, cfg.UserRevocationDelay)
+	checker.SetMetrics(obs.Cache("active"))
+	permsCache := access.NewPermissionsCache(accessStore, cfg.PermissionsCacheTTL)
+	permsCache.SetMetrics(obs.Cache("permissions"))
+	users := &userSource{store: store, checker: checker, perms: permsCache}
 	sessionHandlers := session.NewHandlers(sessions, users, []string{cfg.BaseURL, cfg.FrontendBaseURL})
 	graphqlServer := graphqlapi.NewServer(&graphqlapi.Resolver{
 		Directory: store,
@@ -129,15 +140,20 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		if err != nil {
 			return err
 		}
+		samlService.SetMetrics(obs.SignIns())
 		go samlService.RefreshMetadataLoop(ctx)
 	} else {
 		logger.Warn("SAML_IDP_METADATA_URL is not set: SSO routes are disabled")
 	}
 
 	relay := events.NewRelay(pool, cfg.RabbitMQURL, cfg.EventsExchange, logger)
+	relay.SetMetrics(obs.Relay())
 	go relay.Run(ctx)
 
 	srv := httpserver.New(cfg.ListenAddr, logger, cfg.ShutdownTimeout,
+		httpserver.WithWrapper(func(h http.Handler) http.Handler {
+			return obs.Recover(obs.HTTPMetrics(h), logger)
+		}),
 		httpserver.WithReadyCheck(dependencyCheck(pool, redisClient)),
 		httpserver.WithRoutes(func(mux *http.ServeMux) {
 			authMux := http.NewServeMux()
@@ -153,9 +169,12 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 			// SCIM is machine-authenticated: mounted outside the session
 			// middleware, and only when a client token is configured.
 			if cfg.SCIMToken != "" {
-				scim.NewHandlers(store, sessions, cfg.SCIMToken, logger).Register(mux)
+				scimHandlers := scim.NewHandlers(store, sessions, cfg.SCIMToken, logger)
+				scimHandlers.SetMetrics(obs.SCIM())
+				scimHandlers.Register(mux)
 				logger.Info("SCIM provisioning enabled")
 			}
+			mux.Handle("GET /internal/metrics", obs.MetricsHandler())
 		}),
 	)
 	if err := srv.Run(ctx); err != nil {
