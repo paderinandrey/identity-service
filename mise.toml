@@ -12,7 +12,7 @@ run = 'go test -race {{arg(name="args", var=true, default="./...")}}'
 
 [tasks.lint]
 description = "Run golangci-lint; pass paths/flags after --"
-run = 'golangci-lint run {{arg(name="args", var=true, default="")}}'
+run = 'golangci-lint run {{arg(name="args", var=true, default="./...")}}'
 
 [tasks.run]
 description = "Run the service locally"
