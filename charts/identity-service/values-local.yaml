@@ -35,10 +35,13 @@ config:
   LOG_LEVEL: info
   LISTEN_ADDR: ":8080"
   SHUTDOWN_TIMEOUT: 10s
-  # Same host inside the cluster and in the browser: SAML redirects carry
-  # absolute URLs and the service fetches IdP metadata from the pod.
-  BASE_URL: "http://identity.localtest.me"
-  FRONTEND_BASE_URL: "http://identity.localtest.me"
+  # *.localhost, not a public domain: Chrome resolves it to loopback itself
+  # (RFC 6761) and treats it as a secure context. The public localtest.me
+  # was worse — OrbStack's DNS proxy rewrites loopback answers into its own
+  # 198.18.x range, which the browser then cannot reach (ERR_EMPTY_RESPONSE),
+  # while curl, using the macOS resolver, got 127.0.0.1 and worked.
+  BASE_URL: "http://identity.localhost"
+  FRONTEND_BASE_URL: "http://identity.localhost"
   SAML_IDP_METADATA_URL: "http://identity-stand-identity-service-keycloak:8080/realms/identity/protocol/saml/descriptor"
   DATABASE_URL: "postgres://identity:identity@identity-stand-identity-service-postgresql:5432/identity_development?sslmode=disable"
   REDIS_URL: "redis://identity-stand-identity-service-redis:6379/0"
@@ -56,7 +59,7 @@ gateway:
     - name: identity-gateway
       namespace: identity-stand
   hostnames:
-    - identity.localtest.me
+    - identity.localhost
   # /graphql ведёт в router, а не напрямую в сервис: сабграфы за ним.
   protectedBackendRefs:
     - name: identity-stand-identity-service-router
@@ -160,7 +163,7 @@ dependencies:
     # Browser-facing hostname: SAML metadata carries absolute URLs that the
     # browser follows, so the IdP must advertise a name reachable outside
     # the cluster. The service itself fetches metadata over the Service name.
-    hostname: keycloak.localtest.me
+    hostname: keycloak.localhost
     args: ["start-dev", "--import-realm"]
     env:
       - name: KC_BOOTSTRAP_ADMIN_USERNAME
@@ -168,7 +171,7 @@ dependencies:
       - name: KC_BOOTSTRAP_ADMIN_PASSWORD
         value: admin
       - name: KC_HOSTNAME
-        value: "http://keycloak.localtest.me"
+        value: "http://keycloak.localhost"
       - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
         value: "true"
     volumeMounts:

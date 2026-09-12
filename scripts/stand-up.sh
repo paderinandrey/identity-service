@@ -61,13 +61,27 @@ kubectl rollout restart "deploy/$RELEASE-identity-service" -n "$NS" >/dev/null
 kubectl rollout status "deploy/$RELEASE-identity-service" -n "$NS" --timeout=300s >/dev/null
 GW=$(kubectl get gateway -n "$NS" identity-gateway -o jsonpath='{.status.addresses[0].value}')
 
+step "Пользователь стенда"
+# Пользователь из realm заводится в нашей БД через SCIM — ровно так, как
+# это сделала бы Okta. JIT-создания нет, поэтому без этого шага войти
+# нельзя, а после рестарта Keycloak realm вернёт того же пользователя.
+curl -s -o /dev/null --resolve "identity.localhost:80:$GW" \
+  -X POST "http://identity.localhost/scim/v2/Users" \
+  -H "Authorization: Bearer local-dev-scim-token-0123456789abcdef" \
+  -H 'Content-Type: application/scim+json' \
+  -d '{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"qa@example.com","displayName":"QA User","active":true}' || true
+echo "qa@example.com заведён (пароль в realm: password)"
+
 cat <<EOF
 
 Стенд поднят. Адрес Gateway: $GW
 
 Хосты (curl --resolve или /etc/hosts):
-  identity.localtest.me -> $GW
-  keycloak.localtest.me -> $GW   (админка: admin/admin)
+  identity.localhost -> $GW
+  keycloak.localhost -> $GW   (админка: admin/admin)
+
+Вход:              http://identity.localhost/auth/saml/init
+                   qa@example.com / password
 
 Проверка целиком:  ./scripts/stand-verify.sh
 Снести:            ./scripts/stand-down.sh

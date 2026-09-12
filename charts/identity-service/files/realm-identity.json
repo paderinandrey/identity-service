@@ -80,14 +80,14 @@
       }
     },
     {
-      "clientId": "http://identity.localtest.me/auth/saml/metadata",
+      "clientId": "http://identity.localhost/auth/saml/metadata",
       "name": "identity-service (k8s stand)",
       "protocol": "saml",
       "enabled": true,
-      "rootUrl": "http://identity.localtest.me",
+      "rootUrl": "http://identity.localhost",
       "baseUrl": "/",
       "redirectUris": [
-        "http://identity.localtest.me/auth/saml/acs"
+        "http://identity.localhost/auth/saml/acs"
       ],
       "frontchannelLogout": true,
       "attributes": {
@@ -98,7 +98,7 @@
         "saml.force.post.binding": "true",
         "saml_name_id_format": "email",
         "saml.signature.algorithm": "RSA_SHA256",
-        "saml_assertion_consumer_url_post": "http://identity.localtest.me/auth/saml/acs"
+        "saml_assertion_consumer_url_post": "http://identity.localhost/auth/saml/acs"
       }
     }
   ]

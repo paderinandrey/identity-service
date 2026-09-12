@@ -295,6 +295,21 @@ mise run stand:verify   # proves the whole contour, step by step
 mise run stand:down
 ```
 
+Then sign in at <http://identity.localhost/auth/saml/init> as
+**qa@example.com / password** (the user ships in the imported realm and is
+provisioned into the database over SCIM by `stand:up`).
+
+Hostnames are `*.localhost` on purpose. A public domain pointing at
+loopback (localtest.me) looked equivalent but broke in the browser:
+OrbStack's DNS proxy rewrites loopback answers into its own 198.18.x range,
+which the browser cannot reach — while curl, going through the macOS
+resolver, got 127.0.0.1 and kept working, hiding the problem. Browsers
+resolve `*.localhost` themselves and treat it as a secure context, which
+also keeps Keycloak's `Secure` cookies working over plain HTTP. The
+verification script therefore drives the login through
+`scripts/stand-login.py`, which reproduces that browser cookie rule —
+curl drops `Secure` cookies over HTTP and cannot complete the flow.
+
 The stand also runs a **Cosmo Router** over two subgraphs — this service
 and a stub subgraph (`dev/stub-subgraph/`) standing in for GSH/DFM: it owns
 `Order` and references our `User` entity. `/graphql` behind the proxy goes
