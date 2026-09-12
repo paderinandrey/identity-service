@@ -280,9 +280,38 @@ service's own `/internal/session/validate` and forwards the
 not routed from outside.
 
 ```bash
-helm lint charts/identity-service
-helm template dev charts/identity-service --set existingSecret=identity-secrets
+mise run chart:check   # lint + render checks (the same script CI runs)
 ```
+
+### Local stand
+
+A full end-to-end stand runs in a local cluster (OrbStack Kubernetes):
+Envoy Gateway with ext-auth, this service, its dependencies and Keycloak,
+all from the chart plus `values-local.yaml`.
+
+```bash
+mise run stand:up       # images, Envoy Gateway, dependencies, migrations, service
+mise run stand:verify   # proves the whole contour, step by step
+mise run stand:down
+```
+
+`stand:verify` is the interesting part: it drives a real sign-in through
+the Keycloak login form and asserts, with observed values, that public
+routes stay open, internal paths are not published, an anonymous request
+to a protected path is refused **by the proxy** (`ext_authz_denied`,
+upstream never called), and that `X-Identity-*` context headers actually
+reach the protected upstream.
+
+Three contract details, each of which silently breaks the whole flow and
+each discovered only by wiring a real proxy:
+
+- Envoy mirrors the **method** of the original request to the auth
+  service, so a GET-only validate route rejects every POST;
+- Envoy treats the configured auth path as a **prefix** and appends the
+  original path (`/internal/session/validate/graphql`);
+- Envoy sends the auth service only a small default header set — the
+  session **cookie** must be listed in `headersToExtAuth`, otherwise
+  validate never sees a session and denies everything.
 
 ## Docker
 

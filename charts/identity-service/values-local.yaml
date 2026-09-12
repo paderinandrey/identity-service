@@ -1,0 +1,142 @@
+# Local stand overlay.
+#
+# DEV-ONLY credentials, committed on purpose: these are the same loud-fake
+# values docker-compose and the README already use. They MUST be overridden
+# for any non-local deploy — production takes secrets from existingSecret.
+
+replicaCount: 1
+
+image:
+  repository: identity-service
+  tag: dev
+  # The image is built locally; OrbStack shares its Docker daemon with the
+  # cluster, so there is nothing to pull.
+  pullPolicy: Never
+
+podDisruptionBudget:
+  enabled: false
+
+# The migration hook is pre-install/pre-upgrade, which in production runs
+# against an already existing managed database. On the stand PostgreSQL is
+# created by this same release, so the hook would deadlock waiting for a
+# database that Helm has not created yet. The stand script runs migrations
+# explicitly once the dependencies are ready; the hook itself stays covered
+# by the chart render checks in CI.
+dbmigrate:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+config:
+  APP_ENV: development
+  LOG_LEVEL: info
+  LISTEN_ADDR: ":8080"
+  SHUTDOWN_TIMEOUT: 10s
+  # Same host inside the cluster and in the browser: SAML redirects carry
+  # absolute URLs and the service fetches IdP metadata from the pod.
+  BASE_URL: "http://identity.localtest.me"
+  FRONTEND_BASE_URL: "http://identity.localtest.me"
+  SAML_IDP_METADATA_URL: "http://identity-stand-identity-service-keycloak:8080/realms/identity/protocol/saml/descriptor"
+  DATABASE_URL: "postgres://identity:identity@identity-stand-identity-service-postgresql:5432/identity_development?sslmode=disable"
+  REDIS_URL: "redis://identity-stand-identity-service-redis:6379/0"
+  RABBITMQ_URL: "amqp://identity:identity@identity-stand-identity-service-rabbitmq:5672/"
+  RELAY_STATE_SECRET: "local-dev-relay-state-secret-0123456789"
+  SCIM_TOKEN: "local-dev-scim-token-0123456789abcdef"
+  E2E_LOGIN_TOKEN: "local-dev-e2e-token-0123456789abcdef"
+
+debugEcho:
+  enabled: true
+
+gateway:
+  enabled: true
+  parentRefs:
+    - name: identity-gateway
+      namespace: identity-stand
+  hostnames:
+    - identity.localtest.me
+
+dependencies:
+  postgresql:
+    enabled: true
+    image: postgres:18
+    port: 5432
+    portName: postgres
+    env:
+      - name: POSTGRES_USER
+        value: identity
+      - name: POSTGRES_PASSWORD
+        value: identity
+      - name: POSTGRES_DB
+        value: identity_development
+    readinessProbe:
+      exec:
+        command: ["pg_isready", "-U", "identity", "-d", "identity_development"]
+      initialDelaySeconds: 3
+      periodSeconds: 5
+  redis:
+    enabled: true
+    image: redis:8.10
+    port: 6379
+    portName: redis
+    readinessProbe:
+      exec:
+        command: ["redis-cli", "ping"]
+      initialDelaySeconds: 3
+      periodSeconds: 5
+  rabbitmq:
+    enabled: true
+    image: rabbitmq:4.2-management
+    port: 5672
+    portName: amqp
+    extraPorts:
+      - name: management
+        containerPort: 15672
+    env:
+      - name: RABBITMQ_DEFAULT_USER
+        value: identity
+      - name: RABBITMQ_DEFAULT_PASS
+        value: identity
+    readinessProbe:
+      exec:
+        command: ["rabbitmq-diagnostics", "-q", "ping"]
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      failureThreshold: 12
+  keycloak:
+    enabled: true
+    # Built locally from dev/keycloak (Keycloak + SCIM client plugin).
+    image: identity-service-keycloak:latest
+    pullPolicy: Never
+    port: 8080
+    portName: http
+    # Browser-facing hostname: SAML metadata carries absolute URLs that the
+    # browser follows, so the IdP must advertise a name reachable outside
+    # the cluster. The service itself fetches metadata over the Service name.
+    hostname: keycloak.localtest.me
+    args: ["start-dev", "--import-realm"]
+    env:
+      - name: KC_BOOTSTRAP_ADMIN_USERNAME
+        value: admin
+      - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+        value: admin
+      - name: KC_HOSTNAME
+        value: "http://keycloak.localtest.me"
+      - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
+        value: "true"
+    volumeMounts:
+      - name: realm
+        mountPath: /opt/keycloak/data/import
+    volumes:
+      - name: realm
+        configMap:
+          name: identity-stand-identity-service-keycloak-realm
+    readinessProbe:
+      httpGet:
+        path: /realms/identity
+        port: 8080
+      initialDelaySeconds: 20
+      periodSeconds: 5
+      failureThreshold: 30

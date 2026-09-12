@@ -73,17 +73,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
-      - run: helm lint charts/identity-service
-      - name: Render with defaults
-        run: helm template ci charts/identity-service > /dev/null
-      - name: Render with gateway, autoscaling and monitoring enabled
-        run: |
-          helm template ci charts/identity-service \
-            --set gateway.enabled=true \
-            --set 'gateway.parentRefs[0].name=identity-gateway' \
-            --set autoscaling.enabled=true \
-            --set serviceMonitor.enabled=true \
-            --set existingSecret=identity-secrets > /dev/null
+      # One copy of the chart checks, shared with local runs.
+      - run: ./scripts/ci-helm-checks.sh
 
   generate-check:
     runs-on: ubuntu-latest

@@ -24,6 +24,22 @@ run = "go run ./cmd/identity-service"
 description = "Start local PostgreSQL, Redis and RabbitMQ"
 run = "docker compose up -d --wait"
 
+[tasks."stand:up"]
+description = "Bring up the full Kubernetes stand (Envoy Gateway, dependencies, service)"
+run = "./scripts/stand-up.sh"
+
+[tasks."stand:verify"]
+description = "Prove the stand end to end: sign-in through the IdP form to context headers upstream"
+run = "./scripts/stand-verify.sh"
+
+[tasks."stand:down"]
+description = "Tear down the Kubernetes stand"
+run = "./scripts/stand-down.sh"
+
+[tasks."chart:check"]
+description = "Helm chart lint and render checks (same script CI runs)"
+run = "./scripts/ci-helm-checks.sh"
+
 [tasks.up-sso]
 description = "Start local infrastructure plus Keycloak (SAML IdP for SSO development)"
 run = "docker compose --profile sso up -d --wait"

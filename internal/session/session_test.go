@@ -430,3 +430,39 @@ func TestValidateLooksUpUserOnce(t *testing.T) {
 			e.users.findCalls, e.users.activeCall, e.users.permCalls)
 	}
 }
+
+func TestValidateAnsweredForAnyMethod(t *testing.T) {
+	e := newEnv(t, testRedis(t), defaultConfig())
+	e.login(t, "u1")
+	cookie := e.sessionCookie(t)
+
+	// ext-auth replays the method of the original request (GraphQL is POST)
+	// and treats the configured path as a prefix, appending the original
+	// path — both shapes must answer identically.
+	paths := []string{"/internal/session/validate", "/internal/session/validate/graphql"}
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete} {
+		for _, path := range paths {
+			req, _ := http.NewRequest(method, e.server.URL+path, nil)
+			req.AddCookie(cookie)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusOK || resp.Header.Get(HeaderUserID) != "u1" {
+				t.Errorf("%s %s = %d, user header %q; want 200 with context",
+					method, path, resp.StatusCode, resp.Header.Get(HeaderUserID))
+			}
+
+			anon, _ := http.NewRequest(method, e.server.URL+path, nil)
+			resp2, err := http.DefaultClient.Do(anon)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = resp2.Body.Close()
+			if resp2.StatusCode != http.StatusUnauthorized {
+				t.Errorf("%s %s without cookie = %d, want 401", method, path, resp2.StatusCode)
+			}
+		}
+	}
+}

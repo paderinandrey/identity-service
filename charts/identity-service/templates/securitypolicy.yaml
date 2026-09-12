@@ -12,6 +12,10 @@ spec:
       kind: HTTPRoute
       name: {{ $fullName }}-protected
   extAuth:
+    # Envoy sends the auth service only a small default header set; the
+    # session cookie must be listed explicitly or validate never sees it.
+    headersToExtAuth:
+      {{- toYaml .Values.gateway.extAuth.headersToExtAuth | nindent 6 }}
     http:
       backendRefs:
         - name: {{ $fullName }}

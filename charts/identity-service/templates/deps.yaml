@@ -1,0 +1,86 @@
+{{- /*
+Stand-only dependencies. Off by default: production uses managed
+instances. Enabled together by values-local.yaml, mirroring the
+docker-compose stack (same images, same dev credentials).
+Deliberately ephemeral — no PVCs, a stand is disposable.
+*/}}
+{{- $fullName := include "identity-service.fullname" . }}
+{{- range $name, $dep := .Values.dependencies }}
+{{- if $dep.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-{{ $name }}
+  labels:
+    {{- include "identity-service.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+      app.kubernetes.io/component: {{ $name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ $.Release.Name }}
+        app.kubernetes.io/component: {{ $name }}
+    spec:
+      containers:
+        - name: {{ $name }}
+          image: {{ $dep.image | quote }}
+          imagePullPolicy: {{ $dep.pullPolicy | default "IfNotPresent" }}
+          {{- with $dep.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $dep.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: {{ $dep.portName | default "tcp" }}
+              containerPort: {{ $dep.port }}
+          {{- with $dep.extraPorts }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $dep.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $dep.volumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml ($dep.resources | default dict) | nindent 12 }}
+      {{- with $dep.volumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-{{ $name }}
+  labels:
+    {{- include "identity-service.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  ports:
+    - name: {{ $dep.portName | default "tcp" }}
+      port: {{ $dep.port }}
+      targetPort: {{ $dep.port }}
+    {{- with $dep.extraPorts }}
+    {{- range . }}
+    - name: {{ .name }}
+      port: {{ .containerPort }}
+      targetPort: {{ .containerPort }}
+    {{- end }}
+    {{- end }}
+  selector:
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    app.kubernetes.io/component: {{ $name }}
+{{- end }}
+{{- end }}

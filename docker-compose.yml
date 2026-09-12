@@ -64,7 +64,8 @@ services:
     ports:
       - "8081:8080"
     volumes:
-      - ./dev/keycloak:/opt/keycloak/data/import:ro
+      # Single realm file shared with the k8s stand chart.
+      - ./charts/identity-service/files:/opt/keycloak/data/import:ro
     healthcheck:
       test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080"]
       interval: 5s

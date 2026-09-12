@@ -14,5 +14,5 @@
 
 ## 3. Завершение
 
-- [ ] 3.1 CI-джоб: `helm lint` + `helm template` с default и с `gateway.enabled=true`; зелёный
+- [x] 3.1 CI-джоб: `helm lint` + `helm template` с default и с `gateway.enabled=true`; зелёный
 - [x] 3.2 README: раздел о чарте и о том, что per-environment values задаёт ArgoCD

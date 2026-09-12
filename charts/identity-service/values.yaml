@@ -135,6 +135,10 @@ gateway:
   extAuth:
     enabled: true
     path: /internal/session/validate
+    # Forwarded to the auth service. Envoy's default allowlist does not
+    # include Cookie, and the session lives in a cookie.
+    headersToExtAuth:
+      - cookie
     headersToBackend:
       - X-Identity-User-Id
       - X-Identity-Email
@@ -143,3 +147,22 @@ gateway:
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# Stand-only dependencies (PostgreSQL, Redis, RabbitMQ, Keycloak).
+# Disabled by default: production points at managed instances via
+# existingSecret. Enabled together by values-local.yaml.
+dependencies:
+  postgresql:
+    enabled: false
+  redis:
+    enabled: false
+  rabbitmq:
+    enabled: false
+  keycloak:
+    enabled: false
+
+# Stand-only echo upstream used to assert that ext-auth forwards the
+# identity headers to the protected backend. Never enable in production.
+debugEcho:
+  enabled: false
+  image: ealen/echo-server:latest

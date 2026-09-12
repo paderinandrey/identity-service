@@ -1,0 +1,12 @@
+{{- if (index .Values.dependencies "keycloak").enabled }}
+{{- /* The realm file is the same one docker-compose imports. */}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "identity-service.fullname" . }}-keycloak-realm
+  labels:
+    {{- include "identity-service.labels" . | nindent 4 }}
+data:
+  realm-identity.json: |
+{{ .Files.Get "files/realm-identity.json" | indent 4 }}
+{{- end }}

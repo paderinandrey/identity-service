@@ -52,7 +52,13 @@ func NewHandlers(manager *Manager, users UserSource, allowedOrigins []string) *H
 func (h *Handlers) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/me", h.handleMe)
 	mux.HandleFunc("POST /auth/logout", h.handleLogout)
-	mux.HandleFunc("GET /internal/session/validate", h.handleValidate)
+	// The ext-auth contract shapes this route: Envoy mirrors the method of
+	// the original request (POST /graphql arrives here as POST) and treats
+	// the configured path as a prefix, appending the original path
+	// (/internal/session/validate/graphql). The check itself depends on
+	// neither, so both the exact path and its subtree are served.
+	mux.HandleFunc("/internal/session/validate", h.handleValidate)
+	mux.HandleFunc("/internal/session/validate/", h.handleValidate)
 }
 
 // currentUser returns the active user of the request session, or nil.
