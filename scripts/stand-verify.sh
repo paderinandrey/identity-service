@@ -97,4 +97,18 @@ me=$(curl -s "${RESOLVE[@]}" -b "$COOKIE_JAR" "http://$HOST/auth/me")
 echo "$me" | grep -q "$USER_EMAIL" || fail "/auth/me вернул: $me"
 pass "/auth/me -> $me"
 
+step "8. Федерация: запрос через router в оба сабграфа"
+fed=$(curl -s "${RESOLVE[@]}" -b "$COOKIE_JAR" -X POST "http://$HOST/graphql" \
+  -H 'Content-Type: application/json' \
+  -d '{"query":"{ orders { id seenIdentityHeaders owner { id email } } }"}')
+echo "$fed" | grep -q '"x-identity-user-id=' || fail "сабграф не получил контекст: $fed"
+echo "$fed" | grep -q "$USER_EMAIL" || fail "federation-ссылка owner -> User не разрешилась: $fed"
+pass "router собрал ответ из двух сабграфов; стаб получил контекст, owner разрешён в identity"
+
+step "9. Аноним не доходит до router"
+code=$(curl -s -o /dev/null -w '%{http_code}' "${RESOLVE[@]}" -X POST "http://$HOST/graphql" \
+  -H 'Content-Type: application/json' -d '{"query":"{ __schema { types { name } } }"}')
+[ "$code" = 401 ] || [ "$code" = 403 ] || fail "анонимная introspection -> $code, ожидался отказ"
+pass "анонимная introspection -> $code (схема не раскрывается)"
+
 printf '\nСТЕНД ПРОВЕРЕН ЦЕЛИКОМ\n'

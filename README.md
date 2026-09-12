@@ -295,6 +295,11 @@ mise run stand:verify   # proves the whole contour, step by step
 mise run stand:down
 ```
 
+The stand also runs a **Cosmo Router** over two subgraphs — this service
+and a stub subgraph (`dev/stub-subgraph/`) standing in for GSH/DFM: it owns
+`Order` and references our `User` entity. `/graphql` behind the proxy goes
+to the router, so a single query is answered from both subgraphs.
+
 `stand:verify` is the interesting part: it drives a real sign-in through
 the Keycloak login form and asserts, with observed values, that public
 routes stay open, internal paths are not published, an anonymous request
@@ -312,6 +317,13 @@ each discovered only by wiring a real proxy:
 - Envoy sends the auth service only a small default header set — the
   session **cookie** must be listed in `headersToExtAuth`, otherwise
   validate never sees a session and denies everything.
+
+For federation, the router propagates the session cookie to subgraphs
+(so this service authenticates router calls with its existing session
+check, no separate machine channel) and forwards the `X-Identity-*`
+context onward. A subgraph referencing our user must declare
+`type User @key(fields: "id", resolvable: false) { id: ID! }` — adding
+`@external` to the key field breaks composition.
 
 ## Docker
 

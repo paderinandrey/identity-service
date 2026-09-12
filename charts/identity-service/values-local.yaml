@@ -57,6 +57,10 @@ gateway:
       namespace: identity-stand
   hostnames:
     - identity.localtest.me
+  # /graphql ведёт в router, а не напрямую в сервис: сабграфы за ним.
+  protectedBackendRefs:
+    - name: identity-stand-identity-service-router
+      port: 3002
 
 dependencies:
   postgresql:
@@ -105,6 +109,47 @@ dependencies:
       initialDelaySeconds: 15
       periodSeconds: 10
       failureThreshold: 12
+  router:
+    enabled: true
+    # Cosmo Router: композиция суперграфа статическая (файл в ConfigMap),
+    # schema registry для стенда не нужен.
+    image: ghcr.io/wundergraph/cosmo/router:latest
+    port: 3002
+    portName: http
+    env:
+      - name: EXECUTION_CONFIG_FILE_PATH
+        value: /etc/router/supergraph.json
+      - name: CONFIG_PATH
+        value: /etc/router/config.yaml
+    volumeMounts:
+      - name: config
+        mountPath: /etc/router
+    volumes:
+      - name: config
+        configMap:
+          name: router-config
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 3002
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      failureThreshold: 20
+  stub-subgraph:
+    enabled: true
+    # Стоит за GSH/DFM в спайке federation: владеет Order и ссылается на
+    # нашу entity User, плюс докладывает, какие identity-заголовки реально
+    # дошли до сабграфа через router.
+    image: stub-subgraph:dev
+    pullPolicy: Never
+    port: 8080
+    portName: http
+    readinessProbe:
+      httpGet:
+        path: /healthz
+        port: 8080
+      initialDelaySeconds: 3
+      periodSeconds: 5
   keycloak:
     enabled: true
     # Built locally from dev/keycloak (Keycloak + SCIM client plugin).

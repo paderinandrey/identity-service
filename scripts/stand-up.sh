@@ -22,7 +22,8 @@ step() { printf '\n== %s\n' "$1"; }
 step "Образы"
 docker build -q -t identity-service:dev . >/dev/null
 docker build -q -t identity-service-keycloak:latest dev/keycloak >/dev/null
-echo "identity-service:dev, identity-service-keycloak:latest собраны"
+docker build -q -t stub-subgraph:dev dev/stub-subgraph >/dev/null
+echo "identity-service:dev, identity-service-keycloak:latest, stub-subgraph:dev собраны"
 
 step "Envoy Gateway"
 if ! kubectl get ns envoy-gateway-system >/dev/null 2>&1; then
@@ -39,7 +40,7 @@ echo "gateway применён"
 
 step "Релиз"
 helm upgrade --install "$RELEASE" "$CHART" -f "$CHART/values-local.yaml" -n "$NS" >/dev/null
-for dep in postgresql redis rabbitmq keycloak echo; do
+for dep in postgresql redis rabbitmq keycloak echo stub-subgraph; do
   kubectl wait --for=condition=Available "deploy/$RELEASE-identity-service-$dep" -n "$NS" --timeout=300s >/dev/null
   echo "  $dep готов"
 done
@@ -49,6 +50,11 @@ kubectl run "migrate-$RANDOM" -n "$NS" --rm -i --restart=Never --quiet \
   --image=identity-service:dev --image-pull-policy=Never \
   --overrides="{\"spec\":{\"containers\":[{\"name\":\"migrate\",\"image\":\"identity-service:dev\",\"imagePullPolicy\":\"Never\",\"args\":[\"migrate\"],\"envFrom\":[{\"configMapRef\":{\"name\":\"$RELEASE-identity-service\"}}]}]}}" \
   2>&1 | grep -E "OK|successfully" | tail -2
+
+step "Суперграф и router"
+./scripts/stand-compose-supergraph.sh
+kubectl rollout status "deploy/$RELEASE-identity-service-router" -n "$NS" --timeout=300s >/dev/null
+echo "router обслуживает скомпонованный суперграф"
 
 step "Сервис"
 kubectl rollout restart "deploy/$RELEASE-identity-service" -n "$NS" >/dev/null
