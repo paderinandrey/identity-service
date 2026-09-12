@@ -16,7 +16,16 @@ spec:
   hostnames:
     - {{ (index .Values.dependencies "keycloak").hostname | quote }}
   rules:
-    - backendRefs:
+    - filters:
+        # Keycloak отдаёт HSTS с includeSubDomains даже по HTTP. Браузер,
+        # получив его один раз, на год форсирует HTTPS для этого хоста — а
+        # у стенда TLS-слушателя нет, и вход становится невозможен
+        # (curl HSTS игнорирует, поэтому в скриптах это незаметно).
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            remove:
+              - Strict-Transport-Security
+      backendRefs:
         - name: {{ include "identity-service.fullname" . }}-keycloak
           port: {{ (index .Values.dependencies "keycloak").port }}
 {{- end }}
