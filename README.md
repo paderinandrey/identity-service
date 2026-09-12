@@ -260,6 +260,30 @@ Two notes for the suites:
   `sign_ins_total{result}`, `scim_operations_total{op}` and
   `cache_requests_total{cache,result}` for the permissions/active caches.
 
+## Kubernetes
+
+`charts/identity-service/` is a Helm chart following the conventions of
+the other services in the ecosystem (in-repo chart, per-environment values
+supplied by ArgoCD). Schema migrations run as a `pre-install`/`pre-upgrade`
+hook (`argocd.argoproj.io/sync-wave: "-1"`), so they finish before new pods
+start. Probes use the service contract paths `/healthz` and `/readyz`.
+
+Non-secret configuration is rendered into a ConfigMap from `config` in
+values; connection strings, tokens and the RelayState secret must come
+from an existing Secret named in `existingSecret` — never from values.
+
+With `gateway.enabled=true` the chart also renders Gateway API resources:
+two HTTPRoutes (sign-in and provisioning paths stay public; `/graphql` is
+protected) and an Envoy Gateway `SecurityPolicy` whose ext-auth calls this
+service's own `/internal/session/validate` and forwards the
+`X-Identity-*` context headers upstream. Internal paths are deliberately
+not routed from outside.
+
+```bash
+helm lint charts/identity-service
+helm template dev charts/identity-service --set existingSecret=identity-secrets
+```
+
 ## Docker
 
 ```bash

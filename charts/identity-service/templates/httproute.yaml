@@ -1,0 +1,59 @@
+{{- if .Values.gateway.enabled }}
+{{- $fullName := include "identity-service.fullname" . }}
+{{- /*
+Two routes on purpose: sign-in and provisioning must work without a
+session, so only the protected route carries the ext-auth policy.
+Internal paths (/internal/*) are intentionally not routed from outside.
+*/}}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $fullName }}-public
+  labels:
+    {{- include "identity-service.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    {{- toYaml .Values.gateway.parentRefs | nindent 4 }}
+  {{- with .Values.gateway.hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - matches:
+        {{- range .Values.gateway.publicPaths }}
+        - path:
+            type: PathPrefix
+            value: {{ . | quote }}
+        {{- end }}
+      backendRefs:
+        - name: {{ $fullName }}
+          port: {{ .Values.service.port }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $fullName }}-protected
+  labels:
+    {{- include "identity-service.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    {{- toYaml .Values.gateway.parentRefs | nindent 4 }}
+  {{- with .Values.gateway.hostnames }}
+  hostnames:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - matches:
+        {{- range .Values.gateway.protectedPaths }}
+        - path:
+            type: PathPrefix
+            value: {{ . | quote }}
+        {{- end }}
+      backendRefs:
+        {{- if .Values.gateway.protectedBackendRefs }}
+        {{- toYaml .Values.gateway.protectedBackendRefs | nindent 8 }}
+        {{- else }}
+        - name: {{ $fullName }}
+          port: {{ .Values.service.port }}
+        {{- end }}
+{{- end }}
