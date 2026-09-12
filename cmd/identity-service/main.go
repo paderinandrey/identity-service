@@ -117,11 +117,11 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}, logger)
 
 	accessStore := postgres.NewAccessStore(pool)
-	checker := identity.NewActiveChecker(store, cfg.UserRevocationDelay)
-	checker.SetMetrics(obs.Cache("active"))
+	userCache := identity.NewUserCache(store, cfg.UserRevocationDelay)
+	userCache.SetMetrics(obs.Cache("user"))
 	permsCache := access.NewPermissionsCache(accessStore, cfg.PermissionsCacheTTL)
 	permsCache.SetMetrics(obs.Cache("permissions"))
-	users := &userSource{store: store, checker: checker, perms: permsCache}
+	users := &userSource{users: userCache, perms: permsCache}
 	sessionHandlers := session.NewHandlers(sessions, users, []string{cfg.BaseURL, cfg.FrontendBaseURL})
 	graphqlServer := graphqlapi.NewServer(&graphqlapi.Resolver{
 		Directory: store,
@@ -190,20 +190,19 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	return nil
 }
 
-// userSource joins the store with the cached active-flag checker and the
-// cached effective permissions for session validation endpoints.
+// userSource serves session-validation lookups from caches: validate runs
+// on every ecosystem request, so a warm cache must not touch PostgreSQL.
 type userSource struct {
-	store   *postgres.Store
-	checker *identity.ActiveChecker
-	perms   *access.PermissionsCache
+	users *identity.UserCache
+	perms *access.PermissionsCache
 }
 
 func (u *userSource) FindByID(ctx context.Context, id string) (*identity.User, error) {
-	return u.store.FindByID(ctx, id)
+	return u.users.FindByID(ctx, id)
 }
 
 func (u *userSource) IsActive(ctx context.Context, id string) (bool, error) {
-	return u.checker.IsActive(ctx, id)
+	return u.users.IsActive(ctx, id)
 }
 
 func (u *userSource) Permissions(ctx context.Context, id string) ([]string, error) {

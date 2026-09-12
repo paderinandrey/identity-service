@@ -6,13 +6,15 @@ golangci-lint = "2.13.2"
 description = "Build the service binary into bin/"
 run = "go build -o bin/identity-service ./cmd/identity-service"
 
-[tasks.test]
-description = "Run tests with the race detector; pass packages/flags after -- (default ./...)"
-run = 'go test -race {{arg(name="args", var=true, default="./...")}}'
+
 
 [tasks.lint]
-description = "Run golangci-lint; pass paths/flags after --"
-run = 'golangci-lint run {{arg(name="args", var=true, default="./...")}}'
+description = "Run golangci-lint (extra args after -- are appended)"
+run = "golangci-lint run"
+
+[tasks.test]
+description = "Run tests with the race detector (extra flags after -- are appended, e.g. -- -run TestFoo)"
+run = "go test -race ./..."
 
 [tasks.run]
 description = "Run the service locally"

@@ -126,40 +126,84 @@ func TestResolveRefusesRelinkByEmail(t *testing.T) {
 	}
 }
 
-func TestActiveCheckerCachesWithinTTL(t *testing.T) {
-	store := &fakeStore{findByID: map[string]*User{"u1": {ID: "u1", Active: true}}}
-	checker := NewActiveChecker(store, time.Minute)
+// countingStore reports how many times the hot path reached storage —
+// validate runs on every ecosystem request, so this count is a contract.
+type countingStore struct {
+	Store
+	users map[string]*User
+	calls int
+}
 
-	for range 3 {
-		active, err := checker.IsActive(t.Context(), "u1")
+func (s *countingStore) FindByID(_ context.Context, id string) (*User, error) {
+	s.calls++
+	if u, ok := s.users[id]; ok {
+		return u, nil
+	}
+	return nil, ErrUserNotFound
+}
+
+func TestUserCacheServesRepeatedLookupsFromMemory(t *testing.T) {
+	store := &countingStore{users: map[string]*User{
+		"u1": {ID: "u1", Email: "u1@example.com", Active: true},
+	}}
+	cache := NewUserCache(store, time.Minute)
+
+	for range 5 {
+		user, err := cache.FindByID(t.Context(), "u1")
+		if err != nil || user.Email != "u1@example.com" {
+			t.Fatalf("FindByID = %v, %v", user, err)
+		}
+		active, err := cache.IsActive(t.Context(), "u1")
 		if err != nil || !active {
-			t.Fatalf("IsActive() = %v, %v; want true, nil", active, err)
+			t.Fatalf("IsActive = %v, %v", active, err)
 		}
 	}
-	if store.findByIDN != 1 {
-		t.Errorf("store hit %d times, want 1 (cached)", store.findByIDN)
+	if store.calls != 1 {
+		t.Errorf("storage hit %d times for 10 lookups, want 1 (warm cache must not touch the database)", store.calls)
 	}
 }
 
-func TestActiveCheckerExpiresCache(t *testing.T) {
-	store := &fakeStore{findByID: map[string]*User{"u1": {ID: "u1", Active: true}}}
-	checker := NewActiveChecker(store, time.Minute)
-
+func TestUserCacheRefreshesAfterTTL(t *testing.T) {
+	store := &countingStore{users: map[string]*User{
+		"u1": {ID: "u1", Email: "old@example.com", Active: true},
+	}}
+	cache := NewUserCache(store, time.Minute)
 	current := time.Now()
-	checker.now = func() time.Time { return current }
+	cache.now = func() time.Time { return current }
 
-	if _, err := checker.IsActive(t.Context(), "u1"); err != nil {
+	if _, err := cache.FindByID(t.Context(), "u1"); err != nil {
 		t.Fatal(err)
 	}
-	store.findByID["u1"].Active = false
+	store.users["u1"] = &User{ID: "u1", Email: "new@example.com", Active: false}
 	current = current.Add(2 * time.Minute)
 
-	active, err := checker.IsActive(t.Context(), "u1")
-	if err != nil {
-		t.Fatal(err)
+	user, err := cache.FindByID(t.Context(), "u1")
+	if err != nil || user.Email != "new@example.com" {
+		t.Errorf("after TTL: FindByID = %v, %v; want refreshed record", user, err)
 	}
-	if active {
-		t.Error("deactivation must be visible after the revocation delay")
+	active, err := cache.IsActive(t.Context(), "u1")
+	if err != nil || active {
+		t.Errorf("deactivation must be visible after the revocation delay: %v, %v", active, err)
+	}
+	if store.calls != 2 {
+		t.Errorf("storage calls = %d, want 2 (one per TTL window)", store.calls)
+	}
+}
+
+func TestUserCacheCachesMisses(t *testing.T) {
+	store := &countingStore{users: map[string]*User{}}
+	cache := NewUserCache(store, time.Minute)
+
+	for range 3 {
+		if _, err := cache.FindByID(t.Context(), "ghost"); !errors.Is(err, ErrUserNotFound) {
+			t.Fatalf("FindByID for unknown user: err = %v, want ErrUserNotFound", err)
+		}
+		if active, _ := cache.IsActive(t.Context(), "ghost"); active {
+			t.Error("unknown user must not be active")
+		}
+	}
+	if store.calls != 1 {
+		t.Errorf("unknown id hit storage %d times, want 1 (misses are cached too)", store.calls)
 	}
 }
 

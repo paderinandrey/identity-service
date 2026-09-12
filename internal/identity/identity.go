@@ -102,38 +102,42 @@ type CacheMetrics interface {
 	Observe(hit bool)
 }
 
-// ActiveChecker caches the user's active flag for a bounded revocation delay,
-// so per-request session validation does not hit PostgreSQL every time.
-type ActiveChecker struct {
+// UserCache caches user records for a bounded revocation delay, so the
+// session hot path (validate is called on every ecosystem request) does
+// not hit PostgreSQL every time. Both the record and the active flag are
+// served from one entry; misses are cached too, so unknown ids cannot be
+// used to hammer the database.
+type UserCache struct {
 	store Store
 	ttl   time.Duration
 
 	mu      sync.Mutex
-	cache   map[string]activeEntry
+	cache   map[string]userEntry
 	now     func() time.Time
 	metrics CacheMetrics
 }
 
-type activeEntry struct {
-	active  bool
+type userEntry struct {
+	user    *User // nil when the user does not exist
 	expires time.Time
 }
 
-// NewActiveChecker builds a checker with the given revocation delay.
-func NewActiveChecker(store Store, ttl time.Duration) *ActiveChecker {
-	return &ActiveChecker{
+// NewUserCache builds a cache with the given revocation delay.
+func NewUserCache(store Store, ttl time.Duration) *UserCache {
+	return &UserCache{
 		store: store,
 		ttl:   ttl,
-		cache: make(map[string]activeEntry),
+		cache: make(map[string]userEntry),
 		now:   time.Now,
 	}
 }
 
 // SetMetrics attaches cache instrumentation.
-func (c *ActiveChecker) SetMetrics(m CacheMetrics) { c.metrics = m }
+func (c *UserCache) SetMetrics(m CacheMetrics) { c.metrics = m }
 
-// IsActive reports whether the user is currently active, at most ttl stale.
-func (c *ActiveChecker) IsActive(ctx context.Context, userID string) (bool, error) {
+// lookup returns the cached user (nil means "known to not exist"),
+// fetching and caching it on a miss.
+func (c *UserCache) lookup(ctx context.Context, userID string) (*User, error) {
 	c.mu.Lock()
 	entry, ok := c.cache[userID]
 	c.mu.Unlock()
@@ -142,17 +146,41 @@ func (c *ActiveChecker) IsActive(ctx context.Context, userID string) (bool, erro
 		c.metrics.Observe(hit)
 	}
 	if hit {
-		return entry.active, nil
+		return entry.user, nil
 	}
 
 	user, err := c.store.FindByID(ctx, userID)
 	if err != nil && !errors.Is(err, ErrUserNotFound) {
-		return false, err
+		return nil, err
 	}
-	active := err == nil && user.Active
+	if errors.Is(err, ErrUserNotFound) {
+		user = nil
+	}
 
 	c.mu.Lock()
-	c.cache[userID] = activeEntry{active: active, expires: c.now().Add(c.ttl)}
+	c.cache[userID] = userEntry{user: user, expires: c.now().Add(c.ttl)}
 	c.mu.Unlock()
-	return active, nil
+	return user, nil
+}
+
+// FindByID returns the user, at most ttl stale; ErrUserNotFound when the
+// user does not exist.
+func (c *UserCache) FindByID(ctx context.Context, userID string) (*User, error) {
+	user, err := c.lookup(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, ErrUserNotFound
+	}
+	return user, nil
+}
+
+// IsActive reports whether the user is currently active, at most ttl stale.
+func (c *UserCache) IsActive(ctx context.Context, userID string) (bool, error) {
+	user, err := c.lookup(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	return user != nil && user.Active, nil
 }

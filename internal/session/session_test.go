@@ -25,9 +25,16 @@ type fakeUsers struct {
 	inactive map[string]bool
 	perms    map[string][]string
 	failing  bool
+
+	// Per-request lookup counts: validate runs on every ecosystem
+	// request, so redundant lookups must not creep back in.
+	findCalls  int
+	activeCall int
+	permCalls  int
 }
 
 func (f *fakeUsers) Permissions(_ context.Context, id string) ([]string, error) {
+	f.permCalls++
 	if f.failing {
 		return nil, context.DeadlineExceeded
 	}
@@ -35,6 +42,7 @@ func (f *fakeUsers) Permissions(_ context.Context, id string) ([]string, error) 
 }
 
 func (f *fakeUsers) FindByID(_ context.Context, id string) (*identity.User, error) {
+	f.findCalls++
 	if u, ok := f.users[id]; ok {
 		return u, nil
 	}
@@ -42,6 +50,7 @@ func (f *fakeUsers) FindByID(_ context.Context, id string) (*identity.User, erro
 }
 
 func (f *fakeUsers) IsActive(_ context.Context, id string) (bool, error) {
+	f.activeCall++
 	if f.failing {
 		return false, context.DeadlineExceeded
 	}
@@ -404,5 +413,20 @@ func TestDestroyAllForUser(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("user session index has %d entries, want 0", count)
+	}
+}
+
+func TestValidateLooksUpUserOnce(t *testing.T) {
+	e := newEnv(t, testRedis(t), defaultConfig())
+	e.login(t, "u1")
+	e.users.findCalls, e.users.activeCall, e.users.permCalls = 0, 0, 0
+
+	if resp := e.get(t, "/internal/session/validate"); resp.StatusCode != http.StatusOK {
+		t.Fatalf("validate = %d", resp.StatusCode)
+	}
+
+	if e.users.findCalls != 1 || e.users.activeCall != 1 || e.users.permCalls != 1 {
+		t.Errorf("lookups per validate: find=%d active=%d perms=%d, want 1/1/1 (no redundant round trips on the hot path)",
+			e.users.findCalls, e.users.activeCall, e.users.permCalls)
 	}
 }
