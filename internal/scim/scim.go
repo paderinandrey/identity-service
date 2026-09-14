@@ -265,10 +265,10 @@ func (h *Handlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, err := h.store.ProvisionCreate(ctx, identity.Provision{
-		Email:      payload.UserName,
-		Name:       payload.displayNameOrFallback(),
-		Active:     payload.isActive(),
-		ExternalID: payload.ExternalID,
+		Email:      new(payload.UserName),
+		Name:       new(payload.displayNameOrFallback()),
+		Active:     new(payload.isActive()),
+		ExternalID: new(payload.ExternalID),
 	})
 	if err != nil {
 		h.writeApplyError(w, err)
@@ -308,11 +308,12 @@ func (h *Handlers) handleReplace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalidValue", "userName is required")
 		return
 	}
+	// PUT replaces the resource, so every attribute is present.
 	updated, err := h.apply(ctx, user.ID, identity.Provision{
-		Email:      payload.UserName,
-		Name:       payload.displayNameOrFallback(),
-		Active:     payload.isActive(),
-		ExternalID: payload.ExternalID,
+		Email:      new(payload.UserName),
+		Name:       new(payload.displayNameOrFallback()),
+		Active:     new(payload.isActive()),
+		ExternalID: new(payload.ExternalID),
 	})
 	if err != nil {
 		h.writeApplyError(w, err)
@@ -349,12 +350,11 @@ func (h *Handlers) handlePatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	externalID, err := h.store.IdentitySubject(ctx, user.ID, identity.ProviderOkta)
-	if err != nil {
-		h.internalError(w, err)
-		return
-	}
-	desired := identity.Provision{Email: user.Email, Name: user.Name, Active: user.Active, ExternalID: externalID}
+	// Only the attributes the PATCH mentions are set; everything else is
+	// read from the row inside the store transaction, after the lock, so a
+	// change that landed between this handler's read and the apply is
+	// kept rather than overwritten with a stale snapshot.
+	var desired identity.Provision
 
 	for _, op := range body.Operations {
 		if !strings.EqualFold(op.Op, "replace") {
@@ -389,16 +389,16 @@ func applyPatchOp(desired *identity.Provision, path string, value json.RawMessag
 			return fmt.Errorf("malformed replace value")
 		}
 		if payload.UserName != nil {
-			desired.Email = *payload.UserName
+			desired.Email = payload.UserName
 		}
 		if payload.DisplayName != nil {
-			desired.Name = *payload.DisplayName
+			desired.Name = payload.DisplayName
 		}
 		if payload.ExternalID != nil {
-			desired.ExternalID = *payload.ExternalID
+			desired.ExternalID = payload.ExternalID
 		}
 		if payload.Active != nil {
-			desired.Active = *payload.Active
+			desired.Active = payload.Active
 		}
 		return nil
 	case "username":
@@ -411,14 +411,14 @@ func applyPatchOp(desired *identity.Provision, path string, value json.RawMessag
 		// Okta may send booleans as strings in PATCH values.
 		var b bool
 		if err := json.Unmarshal(value, &b); err == nil {
-			desired.Active = b
+			desired.Active = new(b)
 			return nil
 		}
 		var s string
 		if err := json.Unmarshal(value, &s); err == nil {
 			parsed, err := strconv.ParseBool(s)
 			if err == nil {
-				desired.Active = parsed
+				desired.Active = new(parsed)
 				return nil
 			}
 		}
@@ -428,12 +428,12 @@ func applyPatchOp(desired *identity.Provision, path string, value json.RawMessag
 	}
 }
 
-func unmarshalTo(raw json.RawMessage, dst *string) error {
+func unmarshalTo(raw json.RawMessage, dst **string) error {
 	var s string
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return fmt.Errorf("malformed string value")
 	}
-	*dst = s
+	*dst = &s
 	return nil
 }
 
@@ -448,9 +448,8 @@ func (h *Handlers) handleDelete(w http.ResponseWriter, r *http.Request) {
 		h.internalError(w, err)
 		return
 	}
-	// Soft delete is a deactivation with the rest of the state as is; an
-	// empty ExternalID leaves the mapping untouched.
-	if _, err := h.apply(ctx, user.ID, identity.Provision{Email: user.Email, Name: user.Name, Active: false}); err != nil {
+	// Soft delete mentions only the flag; the rest is read under the lock.
+	if _, err := h.apply(ctx, user.ID, identity.Provision{Active: new(false)}); err != nil {
 		h.writeApplyError(w, err)
 		return
 	}

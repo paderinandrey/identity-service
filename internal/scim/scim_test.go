@@ -590,3 +590,29 @@ func TestPatchConflictRollsBackEverything(t *testing.T) {
 		t.Errorf("deactivate counted %d times on a rolled-back patch", e.ops["deactivate"])
 	}
 }
+
+func TestPatchWithoutActiveDoesNotReactivate(t *testing.T) {
+	// The PATCH mentions only displayName; the user was deactivated in the
+	// meantime. Omitted attributes are resolved under the lock, so the
+	// deactivation survives.
+	e := newEnv(t)
+	_, created := e.do(t, "POST", "/scim/v2/Users", createUserPayload("gone@example.com", "Gone", "ext-g"), scimToken)
+	id := created["id"].(string)
+	if _, err := e.store.SetActive(t.Context(), id, false); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, patched := e.do(t, "PATCH", "/scim/v2/Users/"+id, map[string]any{
+		"schemas":    []string{schemaPatchOp},
+		"Operations": []map[string]any{{"op": "replace", "path": "displayName", "value": "Still Gone"}},
+	}, scimToken)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("patch = %d %v", resp.StatusCode, patched)
+	}
+	if patched["displayName"] != "Still Gone" || patched["active"] != false {
+		t.Errorf("patched resource = %v; want renamed and still inactive", patched)
+	}
+	if e.ops["reactivate"] != 0 {
+		t.Errorf("reactivate counted %d times by a name-only patch", e.ops["reactivate"])
+	}
+}

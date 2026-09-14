@@ -28,16 +28,20 @@ var (
 	ErrIdentityTaken = errors.New("external identity belongs to another user")
 )
 
-// Provision is the complete state provisioning wants a user to be in.
-// It is applied as one unit: profile, external identity, active flag and
-// the events they produce either all persist or none do.
+// Provision is the state provisioning wants a user to be in. Fields are
+// optional: nil means "not mentioned", and an apply takes the current value
+// from the row it has locked — never from a snapshot read before the
+// transaction, which a concurrent change could have made stale. Create
+// requires Email; a nil Active defaults to true, a nil Name to "".
 type Provision struct {
-	Email  string
-	Name   string
-	Active bool
-	// ExternalID is the IdP's stable id. Empty leaves the existing mapping
-	// untouched (a PATCH that does not mention externalId).
-	ExternalID string
+	Email *string
+	Name  *string
+	// Active nil leaves the flag alone; a PATCH that does not mention
+	// active must not undo a deactivation that happened in between.
+	Active *bool
+	// ExternalID is the IdP's stable id. Nil or empty leaves the existing
+	// mapping untouched.
+	ExternalID *string
 }
 
 // ProvisionOutcome reports which activation transition an apply performed,

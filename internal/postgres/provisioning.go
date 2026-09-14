@@ -170,17 +170,27 @@ func replaceIdentityTx(ctx context.Context, db execer, userID, provider, subject
 // identity.ErrDuplicate for the email, identity.ErrIdentityTaken for the
 // externalId.
 func (s *Store) ProvisionCreate(ctx context.Context, spec identity.Provision) (*identity.User, error) {
+	if spec.Email == nil {
+		return nil, errors.New("provision create: email is required")
+	}
+	name, active := "", true
+	if spec.Name != nil {
+		name = *spec.Name
+	}
+	if spec.Active != nil {
+		active = *spec.Active
+	}
 	var user *identity.User
 	err := s.inTx(ctx, func(tx pgx.Tx) error {
 		var err error
 		user, err = s.scanUser(tx.QueryRow(ctx,
 			`INSERT INTO users (email, name, active) VALUES ($1, $2, $3)
-			 RETURNING `+userColumns, identity.NormalizeEmail(spec.Email), spec.Name, spec.Active))
+			 RETURNING `+userColumns, identity.NormalizeEmail(*spec.Email), name, active))
 		if err != nil {
 			return err
 		}
-		if spec.ExternalID != "" {
-			if err := replaceIdentityTx(ctx, tx, user.ID, identity.ProviderOkta, spec.ExternalID); err != nil {
+		if spec.ExternalID != nil && *spec.ExternalID != "" {
+			if err := replaceIdentityTx(ctx, tx, user.ID, identity.ProviderOkta, *spec.ExternalID); err != nil {
 				return err
 			}
 		}
@@ -196,7 +206,10 @@ func (s *Store) ProvisionCreate(ctx context.Context, spec identity.Provision) (*
 // profile, external identity, active flag (with the session epoch) and the
 // events of every step. RFC 7644 wants a PATCH applied atomically; a
 // conflict in any step leaves no partial writes and no events. Steps that
-// change nothing record nothing.
+// change nothing record nothing. Fields the spec leaves nil are read from
+// the locked row, so a concurrent change made between the caller's read
+// and this transaction is preserved rather than overwritten (Codex review
+// on PR #3: a PATCH must not resurrect a user deactivated in between).
 func (s *Store) ProvisionApply(ctx context.Context, id string, spec identity.Provision) (*identity.User, identity.ProvisionOutcome, error) {
 	var user *identity.User
 	var outcome identity.ProvisionOutcome
@@ -206,22 +219,29 @@ func (s *Store) ProvisionApply(ctx context.Context, id string, spec identity.Pro
 			return err
 		}
 		user = current
-		if identity.NormalizeEmail(spec.Email) != current.Email || spec.Name != current.Name {
-			if user, err = s.updateProfileTx(ctx, tx, id, spec.Email, spec.Name); err != nil {
+		email, name := current.Email, current.Name
+		if spec.Email != nil {
+			email = identity.NormalizeEmail(*spec.Email)
+		}
+		if spec.Name != nil {
+			name = *spec.Name
+		}
+		if email != current.Email || name != current.Name {
+			if user, err = s.updateProfileTx(ctx, tx, id, email, name); err != nil {
 				return err
 			}
 		}
-		if spec.ExternalID != "" {
-			if err := replaceIdentityTx(ctx, tx, id, identity.ProviderOkta, spec.ExternalID); err != nil {
+		if spec.ExternalID != nil && *spec.ExternalID != "" {
+			if err := replaceIdentityTx(ctx, tx, id, identity.ProviderOkta, *spec.ExternalID); err != nil {
 				return err
 			}
 		}
-		if spec.Active != user.Active {
-			if user, err = s.setActiveTx(ctx, tx, user, spec.Active); err != nil {
+		if spec.Active != nil && *spec.Active != user.Active {
+			if user, err = s.setActiveTx(ctx, tx, user, *spec.Active); err != nil {
 				return err
 			}
-			outcome.Deactivated = !spec.Active
-			outcome.Reactivated = spec.Active
+			outcome.Deactivated = !*spec.Active
+			outcome.Reactivated = *spec.Active
 		}
 		return nil
 	})
