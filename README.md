@@ -197,6 +197,11 @@ the routes are not mounted at all.
   immutable user id) is stored as the `okta` external identity — the same
   subject SAML sign-in resolves by. Email is a mutable attribute owned by
   SCIM; a SAML assertion never writes it.
+- Every request is one transaction: profile, external identity, active
+  flag and the outbox events they produce either all persist or none do.
+  A `409 uniqueness` names the cause — a duplicate `userName` or an
+  `externalId` that already belongs to another user — and leaves the
+  user exactly as it was, with no events published.
 - Deactivation (`active=false` via PUT/PATCH, or DELETE) is soft: the user
   keeps their UUID, history and role assignments, and **all their sessions
   are destroyed immediately** — deactivation in Okta locks the person out

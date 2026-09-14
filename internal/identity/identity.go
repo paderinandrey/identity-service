@@ -23,7 +23,33 @@ var (
 	ErrUserNotFound = errors.New("user not found")
 	// ErrDuplicate is returned when a uniqueness constraint is violated.
 	ErrDuplicate = errors.New("duplicate value")
+	// ErrIdentityTaken is returned when an external identity (provider,
+	// subject) already belongs to another user.
+	ErrIdentityTaken = errors.New("external identity belongs to another user")
 )
+
+// Provision is the state provisioning wants a user to be in. Fields are
+// optional: nil means "not mentioned", and an apply takes the current value
+// from the row it has locked — never from a snapshot read before the
+// transaction, which a concurrent change could have made stale. Create
+// requires Email; a nil Active defaults to true, a nil Name to "".
+type Provision struct {
+	Email *string
+	Name  *string
+	// Active nil leaves the flag alone; a PATCH that does not mention
+	// active must not undo a deactivation that happened in between.
+	Active *bool
+	// ExternalID is the IdP's stable id. Nil or empty leaves the existing
+	// mapping untouched.
+	ExternalID *string
+}
+
+// ProvisionOutcome reports which activation transition an apply performed,
+// so the caller revokes sessions only on a real deactivation.
+type ProvisionOutcome struct {
+	Deactivated bool
+	Reactivated bool
+}
 
 // User is a unified application user.
 type User struct {

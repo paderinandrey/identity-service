@@ -119,8 +119,8 @@ func TestStore(t *testing.T) {
 		}
 
 		other := mustCreateUser(t, store, "other@example.com", "Other")
-		if err := store.ReplaceIdentity(ctx, other.ID, identity.ProviderOkta, "00u-1"); !errors.Is(err, identity.ErrDuplicate) {
-			t.Errorf("duplicate (provider, subject) = %v, want ErrDuplicate", err)
+		if err := store.ReplaceIdentity(ctx, other.ID, identity.ProviderOkta, "00u-1"); !errors.Is(err, identity.ErrIdentityTaken) {
+			t.Errorf("duplicate (provider, subject) = %v, want ErrIdentityTaken", err)
 		}
 		// One identity per provider: a raw insert of a second subject for
 		// the same user must hit the (user_id, provider) constraint.
