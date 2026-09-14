@@ -295,7 +295,12 @@ Two notes for the suites:
 `charts/identity-service/` is a Helm chart following the conventions of
 the other services in the ecosystem (in-repo chart, per-environment values
 supplied by ArgoCD). Schema migrations run as a `pre-install`/`pre-upgrade`
-hook (`argocd.argoproj.io/sync-wave: "-1"`), so they finish before new pods
+hook (`argocd.argoproj.io/sync-wave: "-1"`) that brings its own
+ServiceAccount and ConfigMap — pre-install hooks run before any regular
+resource of the release exists, so a hook that referenced the release's
+own objects could never start on a first install. `stand:verify` proves
+the first install and an upgrade for real: chart into an empty namespace
+against an external database. The hook finishes before new pods
 start. Probes use the service contract paths `/healthz` and `/readyz`.
 
 Non-secret configuration is rendered into a ConfigMap from `config` in
