@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -102,6 +103,10 @@ func newEnv(t *testing.T, redisClient *redis.Client, cfg Config) *env {
 			epoch = u.SessionEpoch
 		}
 		if err := manager.Start(r.Context(), id, epoch); err != nil {
+			if errors.Is(err, ErrUserRevoked) {
+				http.Error(w, err.Error(), http.StatusUnauthorized)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -623,5 +628,55 @@ func TestReloginAfterRevocationGetsNewEpoch(t *testing.T) {
 	}
 	if got := e.meWithToken(t, old); got != http.StatusUnauthorized {
 		t.Errorf("old token after re-login = %d, want 401", got)
+	}
+}
+
+func TestSignInCannotRewindFence(t *testing.T) {
+	// Codex P1: a sign-in that read epoch N from the directory before a
+	// concurrent deactivation published N+1 must not rewind the fence to N
+	// and hand out a live session for a revoked user.
+	e := newEnv(t, testRedis(t), defaultConfig())
+	if err := e.manager.DestroyAllForUser(t.Context(), "u1", 1); err != nil {
+		t.Fatal(err)
+	}
+
+	// The fake directory still says epoch 0: this sign-in lost the race.
+	resp, err := e.client.Post(e.server.URL+"/test/login?user=u1", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("sign-in behind the fence = %d, want 401", resp.StatusCode)
+	}
+	fence, err := e.redis.Get(t.Context(), userEpochKey+"u1").Int64()
+	if err != nil || fence != 1 {
+		t.Errorf("fence after losing sign-in = %d, %v; want 1 (never rewound)", fence, err)
+	}
+	if c := e.sessionCookie(t); c != nil {
+		if got := e.meWithToken(t, c.Value); got != http.StatusUnauthorized {
+			t.Errorf("session issued by a losing sign-in = %d, want 401", got)
+		}
+	}
+}
+
+func TestDelayedRevocationCannotLowerFence(t *testing.T) {
+	e := newEnv(t, testRedis(t), defaultConfig())
+	if err := e.manager.DestroyAllForUser(t.Context(), "u1", 3); err != nil {
+		t.Fatal(err)
+	}
+	// A revocation that was delayed on the wire carries an older epoch.
+	if err := e.manager.DestroyAllForUser(t.Context(), "u1", 2); err != nil {
+		t.Fatal(err)
+	}
+	fence, _ := e.redis.Get(t.Context(), userEpochKey+"u1").Int64()
+	if fence != 3 {
+		t.Errorf("fence after delayed lower revocation = %d, want 3", fence)
+	}
+
+	e.users.users["u1"].SessionEpoch = 3
+	e.login(t, "u1")
+	if got := e.get(t, "/auth/me"); got.StatusCode != http.StatusOK {
+		t.Errorf("session at the current generation = %d, want 200", got.StatusCode)
 	}
 }

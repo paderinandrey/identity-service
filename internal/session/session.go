@@ -24,6 +24,35 @@ const (
 	userEpochKey = "user_epoch:"    // + user UUID -> current session epoch (fence)
 )
 
+// ErrUserRevoked is returned by Start when the user's sessions were revoked
+// concurrently with the sign-in: the fence already sits above the epoch the
+// sign-in read from the directory, so the new session would be dead on
+// arrival. Callers treat it as an authentication failure.
+var ErrUserRevoked = errors.New("user sessions revoked during sign-in")
+
+// raiseFence moves the per-user epoch fence up, never down. A sign-in that
+// read epoch N before a concurrent deactivation published N+1 must not
+// rewind the fence, and a delayed earlier revocation must not overwrite a
+// later one. Returns the fence value after the call.
+var raiseFence = redis.NewScript(`
+local cur = redis.call('GET', KEYS[1])
+if not cur or tonumber(cur) < tonumber(ARGV[1]) then
+  redis.call('SET', KEYS[1], ARGV[1])
+  return tonumber(ARGV[1])
+end
+return tonumber(cur)`)
+
+// commitFenced writes the session only if the user's fence still equals
+// the epoch the session carries — one atomic step, so a revocation cannot
+// slip between the check and the write. Returns 1 when written.
+var commitFenced = redis.NewScript(`
+local fence = redis.call('GET', KEYS[2])
+if fence and tonumber(fence) ~= tonumber(ARGV[2]) then
+  return 0
+end
+redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[3])
+return 1`)
+
 // Config carries session tuning options.
 type Config struct {
 	CookieName    string
@@ -85,10 +114,15 @@ func (m *Manager) Start(ctx context.Context, userID string, epoch int64) error {
 	}
 	m.scs.Put(ctx, userIDKey, userID)
 	m.scs.Put(ctx, epochKey, epoch)
-	// Idempotent: the fence mirrors the database epoch, and a sign-in is
-	// the natural point to make sure it exists.
-	if err := m.redis.Set(ctx, userEpochKey+userID, epoch, 0).Err(); err != nil {
+	// The fence mirrors the database epoch; a sign-in makes sure it exists
+	// but can only raise it. If it is already higher, a revocation won the
+	// race against this sign-in and the session must not be issued.
+	fence, err := raiseFence.Run(ctx, m.redis, []string{userEpochKey + userID}, epoch).Int64()
+	if err != nil {
 		return fmt.Errorf("publish session epoch: %w", err)
+	}
+	if fence > epoch {
+		return ErrUserRevoked
 	}
 
 	token := m.scs.Token(ctx)
@@ -161,7 +195,7 @@ func (m *Manager) Destroy(ctx context.Context) error {
 // request in flight is about to write back — and only then walks the
 // per-user index to delete the keys. Used by provisioning deactivation.
 func (m *Manager) DestroyAllForUser(ctx context.Context, userID string, epoch int64) error {
-	if err := m.redis.Set(ctx, userEpochKey+userID, epoch, 0).Err(); err != nil {
+	if err := raiseFence.Run(ctx, m.redis, []string{userEpochKey + userID}, epoch).Err(); err != nil {
 		return fmt.Errorf("raise session epoch fence: %w", err)
 	}
 	indexKey := userIndexKey + userID
@@ -220,16 +254,28 @@ func (f *fencedStore) FindCtx(ctx context.Context, token string) ([]byte, bool, 
 }
 
 func (f *fencedStore) CommitCtx(ctx context.Context, token string, b []byte, expiry time.Time) error {
-	stale, err := f.stale(ctx, b)
+	userID, epoch, err := f.identity(b)
 	if err != nil {
 		return err
 	}
-	if stale {
-		// Dropping the write is the point: this is the request in flight
-		// trying to resurrect a revoked session.
-		return nil
+	if userID == "" {
+		return f.inner.CommitCtx(ctx, token, b, expiry)
 	}
-	return f.inner.CommitCtx(ctx, token, b, expiry)
+	ttl := time.Until(expiry)
+	if ttl < time.Millisecond {
+		ttl = time.Millisecond
+	}
+	// Check and write in one atomic step. A dropped write (0) is the
+	// point: this is the request in flight trying to resurrect a revoked
+	// session, and a revocation between a separate check and the write
+	// would have let it through.
+	_, err = commitFenced.Run(ctx, f.redis,
+		[]string{storePrefix + token, userEpochKey + userID},
+		b, epoch, ttl.Milliseconds()).Int64()
+	if err != nil {
+		return fmt.Errorf("commit fenced session: %w", err)
+	}
+	return nil
 }
 
 func (f *fencedStore) DeleteCtx(ctx context.Context, token string) error {
@@ -250,22 +296,32 @@ func (f *fencedStore) Delete(token string) error {
 	return f.DeleteCtx(context.Background(), token)
 }
 
+// identity extracts the user and epoch a session carries; "" for an
+// anonymous session.
+func (f *fencedStore) identity(b []byte) (string, int64, error) {
+	_, values, err := f.codec.Decode(b)
+	if err != nil {
+		// scs would fail on the same bytes a moment later; failing here
+		// keeps a malformed session from being written back either.
+		return "", 0, fmt.Errorf("decode session: %w", err)
+	}
+	userID, _ := values[userIDKey].(string)
+	epoch, _ := values[epochKey].(int64)
+	return userID, epoch, nil
+}
+
 // stale reports whether the encoded session belongs to a user whose fence
 // has moved past the epoch the session recorded. Anonymous sessions and
 // users without a fence are never stale; a Redis error is returned so that
 // scs fails closed rather than guessing.
 func (f *fencedStore) stale(ctx context.Context, b []byte) (bool, error) {
-	_, values, err := f.codec.Decode(b)
+	userID, epoch, err := f.identity(b)
 	if err != nil {
-		// scs would fail on the same bytes a moment later; failing here
-		// keeps a malformed session from being written back either.
-		return false, fmt.Errorf("decode session: %w", err)
+		return false, err
 	}
-	userID, _ := values[userIDKey].(string)
 	if userID == "" {
 		return false, nil
 	}
-	epoch, _ := values[epochKey].(int64)
 	current, err := f.redis.Get(ctx, userEpochKey+userID).Int64()
 	if errors.Is(err, redis.Nil) {
 		return false, nil

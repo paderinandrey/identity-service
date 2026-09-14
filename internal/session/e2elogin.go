@@ -55,6 +55,10 @@ func RegisterE2ELogin(mux *http.ServeMux, manager *Manager, users E2EUserLookup,
 		}
 
 		if err := manager.Start(r.Context(), user.ID, user.SessionEpoch); err != nil {
+			if errors.Is(err, ErrUserRevoked) {
+				http.Error(w, "user revoked", http.StatusUnauthorized)
+				return
+			}
 			logger.Error("e2e login session start failed", "error", err)
 			http.Error(w, "session start failed", http.StatusServiceUnavailable)
 			return

@@ -309,6 +309,11 @@ func (s *Service) handleACS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.sessions.Start(r.Context(), user.ID, user.SessionEpoch); err != nil {
+		if errors.Is(err, session.ErrUserRevoked) {
+			// Deactivated while the assertion was in flight.
+			s.reject(w, "user revoked during sign-in")
+			return
+		}
 		s.logger.Error("failed to start session", "error", err)
 		http.Error(w, "sign-in failed", http.StatusServiceUnavailable)
 		return
