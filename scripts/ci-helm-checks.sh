@@ -24,9 +24,19 @@ echo "== рендер с дефолтными values (прод-профиль: �
 out=$(helm template ci "$CHART")
 has "kind: Deployment" || { echo "FAIL: нет Deployment"; exit 1; }
 has "identity-service-migrate" || { echo "FAIL: нет Job миграций"; exit 1; }
+# Хук самодостаточен (F6): свои ServiceAccount и ConfigMap с hook-аннотациями,
+# созданные раньше Job по весу; Job не ссылается на ресурсы релиза, которых
+# на pre-install ещё нет.
+hooked=$(grep -c '"helm.sh/hook": pre-install,pre-upgrade' <<< "$out" || true)
+[ "$hooked" -ge 3 ] || { echo "FAIL: хук-ресурсов с аннотацией $hooked, ожидалось 3 (SA, ConfigMap, Job)"; exit 1; }
+named=$(grep -c 'name: ci-identity-service-migrate$' <<< "$out" || true)
+[ "$named" -ge 3 ] || { echo "FAIL: ресурсов -migrate $named, ожидалось 3"; exit 1; }
+grep -A1 'configMapRef:' <<< "$out" | grep -q 'ci-identity-service-migrate' \
+  || { echo "FAIL: Job миграций не читает хук-ConfigMap"; exit 1; }
+has "serviceAccountName: ci-identity-service-migrate" || { echo "FAIL: Job миграций не использует хук-ServiceAccount"; exit 1; }
 has "kind: HTTPRoute" && { echo "FAIL: маршруты не должны рендериться без gateway.enabled"; exit 1; }
 has "component: postgresql" && { echo "FAIL: зависимости не должны рендериться в проде"; exit 1; }
-echo "PASS: Deployment и Job есть, маршрутов и зависимостей нет"
+echo "PASS: Deployment и самодостаточный хук миграций есть, маршрутов и зависимостей нет"
 
 echo "== рендер с gateway, автоскейлом и мониторингом"
 out=$(helm template ci "$CHART" \

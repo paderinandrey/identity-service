@@ -107,4 +107,53 @@ code=$(curl -s -o /dev/null -w '%{http_code}' "${RESOLVE[@]}" -X POST "http://$H
 [ "$code" = 401 ] || [ "$code" = 403 ] || fail "анонимная introspection -> $code, ожидался отказ"
 pass "анонимная introspection -> $code (схема не раскрывается)"
 
-printf '\nСТЕНД ПРОВЕРЕН ЦЕЛИКОМ\n'
+step "11. Первая установка чарта: хук миграций в пустом namespace"
+# Стенд держит зависимости в том же релизе и хук там выключен; здесь чарт
+# ставится как в проде — в пустой namespace, с внешней базой (отдельная БД
+# в PostgreSQL стенда) — и хук обязан отработать сам, без ресурсов релиза.
+PG="deploy/$RELEASE-identity-service-postgresql"
+PROBE_NS="hook-probe"
+PROBE_DB="identity_hookprobe"
+probe_psql() { kubectl exec -n "$NS" "$PG" -- psql -U identity -d "$1" -tAc "$2" 2>/dev/null | tr -d '[:space:]'; }
+probe_cleanup() {
+  helm uninstall hook-probe -n "$PROBE_NS" >/dev/null 2>&1 || true
+  kubectl delete namespace "$PROBE_NS" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  probe_psql identity_development "DROP DATABASE IF EXISTS $PROBE_DB WITH (FORCE)" >/dev/null || true
+}
+probe_cleanup
+kubectl delete namespace "$PROBE_NS" --ignore-not-found --wait=true >/dev/null 2>&1 || true
+# Уборка — в EXIT-trap до создания первого ресурса: любой fail, set -e или
+# прерывание иначе оставили бы БД, namespace и релиз (ревью Codex, PR #4).
+trap 'probe_cleanup; rm -f "$COOKIE_JAR"' EXIT
+probe_psql identity_development "CREATE DATABASE $PROBE_DB" >/dev/null || fail "не удалось создать БД $PROBE_DB"
+kubectl create namespace "$PROBE_NS" >/dev/null
+kubectl create secret generic hook-probe-secret -n "$PROBE_NS" \
+  --from-literal=DATABASE_URL="postgres://identity:identity@$RELEASE-identity-service-postgresql.$NS.svc:5432/$PROBE_DB?sslmode=disable" >/dev/null
+# APP_ENV=development: подкоманде migrate нужен только DATABASE_URL, остальные
+# обязательные переменные прода к миграциям не относятся.
+install_out=$(helm install hook-probe charts/identity-service -n "$PROBE_NS" \
+  --set existingSecret=hook-probe-secret \
+  --set image.repository=identity-service --set image.tag=dev --set image.pullPolicy=Never \
+  --set config.APP_ENV=development --timeout 3m 2>&1) \
+  || fail "helm install в пустой namespace не прошёл: $(tail -3 <<< "$install_out")"
+# Эталон — версия основной базы стенда: её мигрировал тот же образ, что
+# запускает хук. Считать по файлам в чекауте нельзя: образ и ветка могут
+# расходиться на одну миграцию.
+expected=$(probe_psql identity_development "SELECT max(version_id) FROM goose_db_version")
+version=$(probe_psql "$PROBE_DB" "SELECT max(version_id) FROM goose_db_version")
+[ "$version" = "$expected" ] || fail "после первой установки версия схемы $version, ожидалась $expected"
+pass "helm install с нуля: хук отработал сам, версия схемы $version"
+
+upgrade_out=$(helm upgrade hook-probe charts/identity-service -n "$PROBE_NS" \
+  --set existingSecret=hook-probe-secret \
+  --set image.repository=identity-service --set image.tag=dev --set image.pullPolicy=Never \
+  --set config.APP_ENV=development --set config.LOG_LEVEL=debug --timeout 3m 2>&1) \
+  || fail "helm upgrade с изменённой конфигурацией не прошёл: $(tail -3 <<< "$upgrade_out")"
+revision=$(helm history hook-probe -n "$PROBE_NS" --max 1 -o json 2>/dev/null | grep -oE '"revision":[0-9]+' | grep -oE '[0-9]+' || true)
+jobs_created=$(kubectl get events -n "$PROBE_NS" --field-selector reason=SuccessfulCreate -o json 2>/dev/null | grep -c 'hook-probe-identity-service-migrate' || true)
+[ "$revision" = 2 ] && [ "$jobs_created" -ge 2 ] || fail "upgrade: revision=$revision, запусков Job миграций=$jobs_created"
+pass "helm upgrade: revision 2, хук миграций отработал повторно"
+probe_cleanup
+trap 'rm -f "$COOKIE_JAR"' EXIT
+
+printf '\nСТЕНД ПРОВЕРЕН ЦЕЛИКОМ\n' 

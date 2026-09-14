@@ -1,8 +1,52 @@
 {{- if .Values.dbmigrate.enabled }}
+{{- /*
+The migration hook must be self-contained. Helm runs pre-install hooks
+before it creates any regular resource and waits for them to finish, so
+a Job that referenced the release's ServiceAccount or ConfigMap could
+never start on a first install (its pod failed with "serviceaccount not
+found" — finding F6). On upgrade the same reference would read the
+previous release's ConfigMap. The hook therefore brings its own
+ServiceAccount and ConfigMap, ordered before the Job by hook weight (and
+by sync-wave under ArgoCD) and deleted with it.
+*/}}
+{{- $fullName := include "identity-service.fullname" . }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $fullName }}-migrate
+  labels:
+    {{- include "identity-service.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    "argocd.argoproj.io/sync-wave": "-2"
+# Migrations talk to PostgreSQL only; no Kubernetes API token needed.
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullName }}-migrate
+  labels:
+    {{- include "identity-service.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    "argocd.argoproj.io/sync-wave": "-2"
+data:
+  {{- /* Same source as the release ConfigMap, rendered from the values
+         of the release being installed — an upgrade migrates with the
+         new configuration, not the previous one. */}}
+  {{- range $key, $value := .Values.config }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "identity-service.fullname" . }}-migrate
+  name: {{ $fullName }}-migrate
   labels:
     {{- include "identity-service.labels" . | nindent 4 }}
   annotations:
@@ -23,7 +67,7 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "identity-service.serviceAccountName" . }}
+      serviceAccountName: {{ $fullName }}-migrate
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       restartPolicy: Never
@@ -34,7 +78,17 @@ spec:
           args: ["migrate"]
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
-          {{- include "identity-service.env" . | nindent 10 }}
+          envFrom:
+            - configMapRef:
+                name: {{ $fullName }}-migrate
+            {{- if .Values.existingSecret }}
+            - secretRef:
+                name: {{ .Values.existingSecret }}
+            {{- end }}
+          {{- with .Values.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           resources:
             {{- toYaml .Values.dbmigrate.resources | nindent 12 }}
 {{- end }}

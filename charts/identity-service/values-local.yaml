@@ -16,12 +16,14 @@ image:
 podDisruptionBudget:
   enabled: false
 
-# The migration hook is pre-install/pre-upgrade, which in production runs
-# against an already existing managed database. On the stand PostgreSQL is
-# created by this same release, so the hook would deadlock waiting for a
-# database that Helm has not created yet. The stand script runs migrations
-# explicitly once the dependencies are ready; the hook itself stays covered
-# by the chart render checks in CI.
+# The migration hook runs pre-install, before any regular resource of the
+# release exists. In production that is fine: the database is managed and
+# already there. On the stand PostgreSQL is created by this same release,
+# so at hook time there is no database to migrate — a limitation of the
+# stand's single-release layout, not of the hook. The stand script runs
+# migrations once the dependencies are ready; the hook itself is proven by
+# the first-install step of stand-verify (chart into an empty namespace,
+# external database).
 dbmigrate:
   enabled: false
 
