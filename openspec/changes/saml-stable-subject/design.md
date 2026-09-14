@@ -14,10 +14,20 @@ possibleRequestIDs)` со сверкой `InResponseTo` при выключен�
   expression `user.id` (неизменяемый `00u…`); attribute statements
   `email → user.email`, `name → user.displayName`; SCIM `externalId` по
   умолчанию = `user.id` (проверить profile mapping при заведении).
-- **Keycloak (стенд)**: `saml_name_id_format: persistent` даёт user UUID;
-  SCIM-плагин mitodl уже отправляет тот же UUID как `externalId` —
-  подтверждено строкой `okta-scim|eaeb0995-…` в compose-базе. Атрибуты —
-  через `saml-user-property-mapper`.
+- **Keycloak (стенд)**: SCIM-плагин mitodl отправляет user UUID как
+  `externalId` — подтверждено строкой `okta-scim|eaeb0995-…` в compose-базе.
+  А вот `saml_name_id_format: persistent` **не даёт** user UUID: на живом
+  стенде NameID оказался `G-35d5b04a-…` — псевдоним на клиента (моё
+  первоначальное допущение было неверным). Единственный маппер NameID
+  работает по атрибуту пользователя, а встроенное свойство `id` атрибутом
+  не является. Поэтому realm объявляет в user profile атрибут `stableId`
+  (иначе Keycloak молча отбрасывает незадекларированные атрибуты), маппер
+  `saml-user-attribute-nameid-mapper` отдаёт его как persistent NameID, а
+  провижининг стенда записывает в него id пользователя. Встроенный
+  `qa@example.com` получает фиксированный `id` и тот же `stableId`, чтобы
+  compose-Keycloak работал без ручных шагов. Email — через
+  `saml-user-property-mapper`. Okta всё это не нужно: там NameID задаётся
+  выражением `user.id`.
 
 ## Decisions
 

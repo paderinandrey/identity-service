@@ -31,6 +31,7 @@ import (
 	"github.com/paderinandrey/identity-service/internal/logging"
 	"github.com/paderinandrey/identity-service/internal/observability"
 	"github.com/paderinandrey/identity-service/internal/postgres"
+	"github.com/paderinandrey/identity-service/internal/redisstore"
 	"github.com/paderinandrey/identity-service/internal/samlsso"
 	"github.com/paderinandrey/identity-service/internal/scim"
 	"github.com/paderinandrey/identity-service/internal/session"
@@ -132,11 +133,12 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	var samlService *samlsso.Service
 	if cfg.SAMLIdPMetadataURL != "" {
 		samlService, err = samlsso.New(ctx, samlsso.Config{
-			BaseURL:          cfg.BaseURL,
-			FrontendBaseURL:  cfg.FrontendBaseURL,
-			IDPMetadataURL:   cfg.SAMLIdPMetadataURL,
-			RelayStateSecret: cfg.RelayStateSecret,
-		}, store, sessions, logger)
+			BaseURL:           cfg.BaseURL,
+			FrontendBaseURL:   cfg.FrontendBaseURL,
+			IDPMetadataURL:    cfg.SAMLIdPMetadataURL,
+			RelayStateSecret:  cfg.RelayStateSecret,
+			AllowIDPInitiated: cfg.SAMLAllowIDPInitiated,
+		}, store, sessions, redisstore.NewNonceStore(redisClient), logger)
 		if err != nil {
 			return err
 		}

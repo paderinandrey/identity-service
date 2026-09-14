@@ -233,3 +233,24 @@ func TestE2ELoginTokenForbiddenInProduction(t *testing.T) {
 		t.Errorf("staging with e2e token must load: %v", err)
 	}
 }
+
+func TestSAMLAllowIDPInitiated(t *testing.T) {
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SAMLAllowIDPInitiated {
+		t.Error("IdP-initiated sign-in must be off by default")
+	}
+
+	t.Setenv(EnvSAMLAllowIDPInitiated, "true")
+	cfg, err = Load()
+	if err != nil || !cfg.SAMLAllowIDPInitiated {
+		t.Errorf("SAML_ALLOW_IDP_INITIATED=true: cfg=%v err=%v", cfg.SAMLAllowIDPInitiated, err)
+	}
+
+	t.Setenv(EnvSAMLAllowIDPInitiated, "maybe")
+	if _, err := Load(); err == nil {
+		t.Error("non-boolean SAML_ALLOW_IDP_INITIATED must be rejected")
+	}
+}

@@ -24,8 +24,9 @@ with immediate session revocation), user-change events delivered to RabbitMQ
 through a transactional outbox, and observability (Sentry error reporting,
 Prometheus metrics, panic recovery).
 
-Planned as separate OpenSpec changes: Single Logout, GraphQL Router
-integration.
+Planned as a separate OpenSpec change: Single Logout. The GraphQL Router
+spike is done on the local stand (see below); a production router and a
+schema registry are not deployed yet.
 
 ## Requirements
 
@@ -67,19 +68,31 @@ LISTEN_ADDR=":8080" SCIM_TOKEN="local-dev-scim-token-0123456789abcdef" SAML_IDP_
 open http://localhost:8080/auth/saml/init   # sign in as qa@example.com / password
 ```
 
-The imported realm (`dev/keycloak/realm-identity.json`) contains a SAML
-client for this service (signed responses and assertions, NameID = email),
-a `qa@example.com` / `password` test user, and — mirroring how Okta works
-in production — a SCIM outbound provider
+The imported realm (`charts/identity-service/files/realm-identity.json`,
+shared with the k8s stand) contains a SAML client for this service (signed
+responses and assertions, **persistent NameID** = the Keycloak user id,
+email as an attribute), a `qa@example.com` / `password` test user, and —
+mirroring how Okta works in production — a SCIM outbound provider
 ([mitodl/keycloak-scim](https://github.com/mitodl/keycloak-scim), baked
 into the image in `dev/keycloak/Dockerfile`): any user created, updated or
 deactivated in Keycloak is pushed to this service over SCIM with the dev
 token above (hence `SCIM_TOKEN` and `LISTEN_ADDR=:8080` — the Keycloak
 container reaches the host via host.docker.internal). Create users in the
 Keycloak admin console (or the bundled qa user) — they appear here with an
-`okta-scim` identity and a `user.created` outbox event, then sign in with
-their password. `create-user` CLI remains as a shortcut when Keycloak is
-not running.
+`okta` identity keyed by their Keycloak user id (the SCIM plugin sends it
+as `externalId`, the SAML client sends the same id as NameID) and a
+`user.created` outbox event, then sign in with their password. There is no
+sign-in by email: a user who was not provisioned over SCIM gets 401 even
+if an account with that email exists. `create-user` CLI remains as a
+shortcut for users who never need SSO.
+
+One Keycloak-specific wrinkle: its `persistent` NameID is a per-client
+pseudonym, not the user id, so the realm declares a `stableId` user
+attribute and a NameID mapper on it. The bundled qa user ships with
+`stableId` = its fixed id; for a user you create in the admin console, set
+the "Stable id (NameID)" attribute to the user's id (the k8s stand does
+this in `scripts/stand-provision-user.sh`). Okta needs none of this — its
+NameID comes straight from the `user.id` expression.
 
 Note: Keycloak issues Secure cookies even over http — browsers accept
 them on localhost (secure context), non-browser HTTP clients need to opt
@@ -98,6 +111,7 @@ in.
 | `BASE_URL` | `http://localhost:8080` | Public base URL of this service |
 | `FRONTEND_BASE_URL` | `http://localhost:8080` | Where the browser lands after login |
 | `SAML_IDP_METADATA_URL` | — (SSO disabled) | Okta IdP metadata URL |
+| `SAML_ALLOW_IDP_INITIATED` | `false` | Accept SAML responses without `InResponseTo` (IdP-initiated sign-in). An open product decision; off until made |
 | `RELAY_STATE_SECRET` | insecure dev value | HMAC secret for the RelayState token |
 | `SESSION_COOKIE_NAME` | `__identity_session` | Session cookie name |
 | `SESSION_IDLE_TIMEOUT` | `24h` | Session idle expiry (slides with activity) |
@@ -180,7 +194,9 @@ pagination and discovery (`ServiceProviderConfig`, `ResourceTypes`,
 the routes are not mounted at all.
 
 - `userName` maps to email, `displayName` to name; `externalId` (Okta's
-  stable user id) is stored as an `okta-scim` external identity.
+  immutable user id) is stored as the `okta` external identity — the same
+  subject SAML sign-in resolves by. Email is a mutable attribute owned by
+  SCIM; a SAML assertion never writes it.
 - Deactivation (`active=false` via PUT/PATCH, or DELETE) is soft: the user
   keeps their UUID, history and role assignments, and **all their sessions
   are destroyed immediately** — deactivation in Okta locks the person out
@@ -188,8 +204,22 @@ the routes are not mounted at all.
 - Groups are not supported by design: role assignments live in this
   service only (see Access control above).
 
-Okta app setup: SCIM connector base URL `BASE_URL/scim/v2`, auth mode
-"HTTP Header" with the bearer token.
+### Okta app setup
+
+The identity key is Okta's immutable user id, carried by both channels:
+
+- **SAML**: Name ID format `Persistent`, Application username = custom
+  expression `user.id`. Attribute statements: `email` → `user.email`,
+  optionally `name` → `user.displayName`. The service compares the `email`
+  attribute with the directory and logs a drift, but SCIM stays the only
+  writer of the address.
+- **SCIM**: connector base URL `BASE_URL/scim/v2`, auth mode "HTTP Header"
+  with the bearer token. Check the profile mapping: `externalId` must map to
+  `user.id` (Okta's default), so that it equals the SAML NameID.
+- Sign-in is SP-initiated: the service records every AuthnRequest id and
+  accepts each assertion once (`InResponseTo` and assertion ids are
+  one-shot in Redis, shared by all replicas). IdP-initiated sign-in from the
+  Okta dashboard needs `SAML_ALLOW_IDP_INITIATED=true`.
 
 ## User events
 

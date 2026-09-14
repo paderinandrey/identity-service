@@ -221,9 +221,9 @@ func TestCreateGetAndDuplicate(t *testing.T) {
 	}
 
 	// Identity stored, user has no roles.
-	user, err := e.store.FindByIdentity(t.Context(), identity.ProviderOktaSCIM, "okta-ext-1")
+	user, err := e.store.FindByIdentity(t.Context(), identity.ProviderOkta, "okta-ext-1")
 	if err != nil || user.ID != id {
-		t.Errorf("okta-scim identity lookup = %v, %v", user, err)
+		t.Errorf("okta identity lookup = %v, %v", user, err)
 	}
 
 	resp, got := e.do(t, "GET", "/scim/v2/Users/"+id, nil, scimToken)

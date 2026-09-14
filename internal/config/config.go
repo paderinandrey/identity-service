@@ -22,6 +22,7 @@ const (
 	EnvBaseURL               = "BASE_URL"
 	EnvFrontendBaseURL       = "FRONTEND_BASE_URL"
 	EnvSAMLIdPMetadataURL    = "SAML_IDP_METADATA_URL"
+	EnvSAMLAllowIDPInitiated = "SAML_ALLOW_IDP_INITIATED"
 	EnvRelayStateSecret      = "RELAY_STATE_SECRET"
 	EnvSessionCookieName     = "SESSION_COOKIE_NAME"
 	EnvSessionIdleTimeout    = "SESSION_IDLE_TIMEOUT"
@@ -77,7 +78,11 @@ type Config struct {
 	BaseURL            string
 	FrontendBaseURL    string
 	SAMLIdPMetadataURL string
-	RelayStateSecret   string
+	// SAMLAllowIDPInitiated accepts SAML responses that this service did
+	// not initiate (no InResponseTo). Off by default: an open product
+	// decision, not a security default to relax casually.
+	SAMLAllowIDPInitiated bool
+	RelayStateSecret      string
 
 	SessionCookieName     string
 	SessionIdleTimeout    time.Duration
@@ -172,6 +177,13 @@ func Load() (Config, error) {
 	cfg.BaseURL = strings.TrimRight(os.Getenv(EnvBaseURL), "/")
 	cfg.FrontendBaseURL = strings.TrimRight(os.Getenv(EnvFrontendBaseURL), "/")
 	cfg.SAMLIdPMetadataURL = os.Getenv(EnvSAMLIdPMetadataURL)
+	if v := os.Getenv(EnvSAMLAllowIDPInitiated); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: want a boolean, got %q", EnvSAMLAllowIDPInitiated, v)
+		}
+		cfg.SAMLAllowIDPInitiated = b
+	}
 	cfg.RelayStateSecret = os.Getenv(EnvRelayStateSecret)
 
 	cfg.RabbitMQURL = os.Getenv(EnvRabbitMQURL)

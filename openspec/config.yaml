@@ -9,7 +9,7 @@ context: |
   Архитектурное решение от 2026-09-09 (источник:
   ~/dev/notes/architecture/gsh-dfm-shared-ui-identity.md):
   - Общий React/Apollo UI, одна браузерная cookie-сессия (HttpOnly, opaque
-    session id), GraphQL Router (Hive/Cosmo/Apollo — не выбран) как единая
+    session id), GraphQL Router (Cosmo Router, спайк на стенде выполнен) как единая
     точка входа для GSH, DFM, в будущем ERP и Messenger.
   - Этот сервис владеет: SAML SSO через Okta, серверными сессиями в Redis,
     едиными пользователями (стабильный UUID, email — атрибут), ролями,
@@ -24,9 +24,13 @@ context: |
     (ActionPolicy); полная копия ролей в GSH/DFM не создаётся.
   - Не реализуем собственную криптографию или SAML-протокол; не разделяем
     сессии и роли на отдельные приложения. Развёртывание — Kubernetes.
-  - Ещё не выбраны: версия Go, HTTP/GraphQL-фреймворки, SAML-библиотека,
-    библиотека сессий, драйверы, инструменты миграций, GraphQL Router,
-    входной контроллер, протокол доверенного контекста.
+  - Стек выбран и зафиксирован архивом change'ей: Go 1.27, net/http без
+    фреймворка, gqlgen (Federation v2), crewjam/saml, alexedwards/scs +
+    Redis, pgx + goose, RabbitMQ (amqp091), Envoy Gateway (ext-auth),
+    Cosmo Router. Доверенный контекст — заголовки X-Identity-* от ext-auth
+    (interim, без подписи; подписанный контекст — отдельное решение).
+  - Ключ идентичности — неизменяемый id IdP (Okta user.id): persistent
+    SAML NameID и SCIM externalId несут одно значение; email — атрибут.
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.

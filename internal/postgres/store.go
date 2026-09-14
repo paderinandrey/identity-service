@@ -71,23 +71,6 @@ func (s *Store) FindActiveByEmail(ctx context.Context, email string) (*identity.
 		"SELECT "+userColumns+" FROM users WHERE email = $1 AND active", email))
 }
 
-// HasIdentity reports whether the user already has an identity for the provider.
-func (s *Store) HasIdentity(ctx context.Context, userID, provider string) (bool, error) {
-	var exists bool
-	err := s.pool.QueryRow(ctx,
-		"SELECT EXISTS (SELECT 1 FROM user_identities WHERE user_id = $1 AND provider = $2)",
-		userID, provider).Scan(&exists)
-	return exists, err
-}
-
-// AttachIdentity links (provider, subject) to the user.
-func (s *Store) AttachIdentity(ctx context.Context, userID, provider, subject string) error {
-	_, err := s.pool.Exec(ctx,
-		"INSERT INTO user_identities (user_id, provider, subject) VALUES ($1, $2, $3)",
-		userID, provider, subject)
-	return err
-}
-
 // UpsertByEmail creates the user or updates the name, idempotent by email.
 // The active flag of an existing user is left untouched. Records a
 // created/updated event in the same transaction; a no-op upsert (same

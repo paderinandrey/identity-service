@@ -61,19 +61,19 @@ func TestProvisioningStore(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := store.ReplaceIdentity(ctx, u1.ID, identity.ProviderOktaSCIM, "ext-1"); err != nil {
+		if err := store.ReplaceIdentity(ctx, u1.ID, identity.ProviderOkta, "ext-1"); err != nil {
 			t.Fatal(err)
 		}
 		// externalId changes for the same user: replaced in place.
-		if err := store.ReplaceIdentity(ctx, u1.ID, identity.ProviderOktaSCIM, "ext-2"); err != nil {
+		if err := store.ReplaceIdentity(ctx, u1.ID, identity.ProviderOkta, "ext-2"); err != nil {
 			t.Fatal(err)
 		}
-		got, err := store.FindByIdentity(ctx, identity.ProviderOktaSCIM, "ext-2")
+		got, err := store.FindByIdentity(ctx, identity.ProviderOkta, "ext-2")
 		if err != nil || got.ID != u1.ID {
 			t.Errorf("FindByIdentity after replace = %v, %v", got, err)
 		}
 		// Another user claiming the same subject is a duplicate.
-		if err := store.ReplaceIdentity(ctx, u2.ID, identity.ProviderOktaSCIM, "ext-2"); !errors.Is(err, identity.ErrDuplicate) {
+		if err := store.ReplaceIdentity(ctx, u2.ID, identity.ProviderOkta, "ext-2"); !errors.Is(err, identity.ErrDuplicate) {
 			t.Errorf("subject theft: err = %v, want ErrDuplicate", err)
 		}
 	})

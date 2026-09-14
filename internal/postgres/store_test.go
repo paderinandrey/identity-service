@@ -107,27 +107,26 @@ func TestStore(t *testing.T) {
 		}
 	})
 
-	t.Run("identities: attach, find, uniqueness", func(t *testing.T) {
+	t.Run("identities: link, find, uniqueness", func(t *testing.T) {
 		u := mustCreateUser(t, store, "ident@example.com", "Ident")
 
-		if err := store.AttachIdentity(ctx, u.ID, identity.ProviderOkta, "subj-1"); err != nil {
-			t.Fatalf("AttachIdentity: %v", err)
+		if err := store.ReplaceIdentity(ctx, u.ID, identity.ProviderOkta, "00u-1"); err != nil {
+			t.Fatalf("ReplaceIdentity: %v", err)
 		}
-		got, err := store.FindByIdentity(ctx, identity.ProviderOkta, "subj-1")
+		got, err := store.FindByIdentity(ctx, identity.ProviderOkta, "00u-1")
 		if err != nil || got.ID != u.ID {
 			t.Fatalf("FindByIdentity = %v, %v; want user %s", got, err, u.ID)
 		}
 
-		linked, err := store.HasIdentity(ctx, u.ID, identity.ProviderOkta)
-		if err != nil || !linked {
-			t.Errorf("HasIdentity = %v, %v; want true", linked, err)
-		}
-
 		other := mustCreateUser(t, store, "other@example.com", "Other")
-		if err := store.AttachIdentity(ctx, other.ID, identity.ProviderOkta, "subj-1"); err == nil {
-			t.Error("duplicate (provider, subject) must be rejected")
+		if err := store.ReplaceIdentity(ctx, other.ID, identity.ProviderOkta, "00u-1"); !errors.Is(err, identity.ErrDuplicate) {
+			t.Errorf("duplicate (provider, subject) = %v, want ErrDuplicate", err)
 		}
-		if err := store.AttachIdentity(ctx, u.ID, identity.ProviderOkta, "subj-2"); err == nil {
+		// One identity per provider: a raw insert of a second subject for
+		// the same user must hit the (user_id, provider) constraint.
+		if _, err := store.pool.Exec(ctx,
+			"INSERT INTO user_identities (user_id, provider, subject) VALUES ($1, $2, $3)",
+			u.ID, identity.ProviderOkta, "00u-2"); err == nil {
 			t.Error("second identity of the same provider for one user must be rejected")
 		}
 	})
