@@ -6,6 +6,12 @@
 -- the new model; 'okta-scim' rows already hold the stable id and simply
 -- take over the provider name. Delete first: a user may have both rows and
 -- (user_id, provider) is unique.
+--
+-- One-shot pre-production migration: the service is not deployed anywhere
+-- yet, so no older replica will ever run against this data during a
+-- rolling update. It is NOT written for expand/contract on purpose. Once
+-- the first non-local environment exists, data migrations must keep the
+-- previous release's representation readable for one release.
 DELETE FROM user_identities WHERE provider = 'okta';
 UPDATE user_identities SET provider = 'okta' WHERE provider = 'okta-scim';
 

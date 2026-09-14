@@ -19,4 +19,4 @@
 
 - [x] 3.1 Realm Keycloak: атрибут `stableId` в user profile, маппер NameID (persistent) на него и маппер `email` у обоих SAML-клиентов, фиксированный `id`/`stableId` у встроенного пользователя; `stand-provision-user.sh` задаёт `stableId` = id пользователя и заводит его через SCIM с тем же `externalId`; `stand-verify` проверяет, что subject привязки равен id в Keycloak
 - [x] 3.2 README: настройка Okta-приложения (Name ID format Persistent, Application username `user.id`, attribute statements `email`/`name`, проверка SCIM profile mapping `externalId` = `user.id`); упоминания `okta-scim` заменены; `openspec/config.yaml` — устаревшие «не выбран» убраны
-- [ ] 3.3 `mise run lint`, `mise run test`, `mise run vuln` чистые; `stand:up` с нуля и `stand:verify` зелёные; CI зелёный
+- [x] 3.3 `mise run lint`, `mise run test`, `mise run vuln` чистые; `stand:up` с нуля и `stand:verify` зелёные; CI зелёный
