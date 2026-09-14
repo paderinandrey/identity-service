@@ -165,7 +165,7 @@ func (p userPayload) isActive() bool {
 }
 
 func (h *Handlers) resource(ctx context.Context, u *identity.User) userResource {
-	externalID, err := h.store.IdentitySubject(ctx, u.ID, identity.ProviderOktaSCIM)
+	externalID, err := h.store.IdentitySubject(ctx, u.ID, identity.ProviderOkta)
 	if err != nil {
 		h.logger.Warn("failed to read externalId", "error", err)
 	}
@@ -212,7 +212,7 @@ func (h *Handlers) handleList(w http.ResponseWriter, r *http.Request) {
 		case "username":
 			user, err = h.store.FindByEmailAny(ctx, m[2])
 		case "externalid":
-			user, err = h.store.FindByIdentity(ctx, identity.ProviderOktaSCIM, m[2])
+			user, err = h.store.FindByIdentity(ctx, identity.ProviderOkta, m[2])
 		}
 		if err != nil && !errors.Is(err, identity.ErrUserNotFound) {
 			h.internalError(w, err)
@@ -262,7 +262,7 @@ func (h *Handlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if payload.ExternalID != "" {
-		if err := h.store.ReplaceIdentity(ctx, user.ID, identity.ProviderOktaSCIM, payload.ExternalID); err != nil {
+		if err := h.store.ReplaceIdentity(ctx, user.ID, identity.ProviderOkta, payload.ExternalID); err != nil {
 			h.logger.Error("failed to store externalId", "error", err, "user_id", user.ID)
 		}
 	}
@@ -341,7 +341,7 @@ func (h *Handlers) handlePatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	externalID, err := h.store.IdentitySubject(ctx, user.ID, identity.ProviderOktaSCIM)
+	externalID, err := h.store.IdentitySubject(ctx, user.ID, identity.ProviderOkta)
 	if err != nil {
 		h.internalError(w, err)
 		return
@@ -467,7 +467,7 @@ func (h *Handlers) applyState(ctx context.Context, user *identity.User, desired 
 		user = updated
 	}
 	if desired.externalID != "" {
-		if err := h.store.ReplaceIdentity(ctx, user.ID, identity.ProviderOktaSCIM, desired.externalID); err != nil {
+		if err := h.store.ReplaceIdentity(ctx, user.ID, identity.ProviderOkta, desired.externalID); err != nil {
 			return nil, err
 		}
 	}

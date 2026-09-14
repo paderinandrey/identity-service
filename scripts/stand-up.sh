@@ -40,16 +40,27 @@ echo "gateway применён"
 
 step "Релиз"
 helm upgrade --install "$RELEASE" "$CHART" -f "$CHART/values-local.yaml" -n "$NS" >/dev/null
+# Keycloak в dev-режиме хранит realm в эфемерном хранилище и импортирует
+# его только при старте пода (существующий realm при импорте пропускается),
+# поэтому изменения realm-файла применяются перезапуском.
+# `wait --for=condition=Available` не годится: условие остаётся истинным,
+# пока жив старый под, и сервис успел бы забрать метаданные со старыми
+# ключами. `rollout status` ждёт именно новую ревизию.
+kubectl rollout restart "deploy/$RELEASE-identity-service-keycloak" -n "$NS" >/dev/null 2>&1 || true
+kubectl rollout status "deploy/$RELEASE-identity-service-keycloak" -n "$NS" --timeout=300s >/dev/null
 for dep in postgresql redis rabbitmq keycloak echo stub-subgraph; do
   kubectl wait --for=condition=Available "deploy/$RELEASE-identity-service-$dep" -n "$NS" --timeout=300s >/dev/null
   echo "  $dep готов"
 done
 
 step "Миграции"
-kubectl run "migrate-$RANDOM" -n "$NS" --rm -i --restart=Never --quiet \
+# Вывод сохраняется целиком: фильтр grep по "OK|successfully" ронял скрипт
+# через pipefail, когда мигрировать было нечего ("no migrations to run").
+migrate_out=$(kubectl run "migrate-$RANDOM" -n "$NS" --rm -i --restart=Never --quiet \
   --image=identity-service:dev --image-pull-policy=Never \
-  --overrides="{\"spec\":{\"containers\":[{\"name\":\"migrate\",\"image\":\"identity-service:dev\",\"imagePullPolicy\":\"Never\",\"args\":[\"migrate\"],\"envFrom\":[{\"configMapRef\":{\"name\":\"$RELEASE-identity-service\"}}]}]}}" \
-  2>&1 | grep -E "OK|successfully" | tail -2
+  --overrides="{\"spec\":{\"containers\":[{\"name\":\"migrate\",\"image\":\"identity-service:dev\",\"imagePullPolicy\":\"Never\",\"args\":[\"migrate\"],\"envFrom\":[{\"configMapRef\":{\"name\":\"$RELEASE-identity-service\"}}]}]}}" 2>&1) \
+  || { echo "$migrate_out" | tail -5; echo "FAIL: миграции не применились"; exit 1; }
+echo "$migrate_out" | grep -E "goose:" | tail -1
 
 step "Суперграф и router"
 ./scripts/stand-compose-supergraph.sh
@@ -62,15 +73,11 @@ kubectl rollout status "deploy/$RELEASE-identity-service" -n "$NS" --timeout=300
 GW=$(kubectl get gateway -n "$NS" identity-gateway -o jsonpath='{.status.addresses[0].value}')
 
 step "Пользователь стенда"
-# Пользователь из realm заводится в нашей БД через SCIM — ровно так, как
-# это сделала бы Okta. JIT-создания нет, поэтому без этого шага войти
-# нельзя, а после рестарта Keycloak realm вернёт того же пользователя.
-curl -s -o /dev/null --resolve "identity.localhost:80:$GW" \
-  -X POST "http://identity.localhost/scim/v2/Users" \
-  -H "Authorization: Bearer local-dev-scim-token-0123456789abcdef" \
-  -H 'Content-Type: application/scim+json' \
-  -d '{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"qa@example.com","displayName":"QA User","active":true}' || true
-echo "qa@example.com заведён (пароль в realm: password)"
+# Через SCIM с externalId = id пользователя в Keycloak — ровно так, как это
+# делает Okta. Тот же id приходит как persistent NameID при входе; связки
+# по email нет, поэтому без этого шага войти нельзя.
+./scripts/stand-provision-user.sh >/dev/null
+echo "qa@example.com заведён с externalId из Keycloak (пароль в realm: password)"
 
 cat <<EOF
 

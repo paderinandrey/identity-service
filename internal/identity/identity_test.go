@@ -12,13 +12,19 @@ type fakeStore struct {
 
 	byIdentity map[string]*User // provider+"|"+subject
 	byEmail    map[string]*User
-	linked     map[string]bool // userID+"|"+provider
-	attached   []string
 	findByID   map[string]*User
 	findByIDN  int
 }
 
 func key2(a, b string) string { return a + "|" + b }
+
+func (f *fakeStore) FindByID(_ context.Context, id string) (*User, error) {
+	f.findByIDN++
+	if u, ok := f.findByID[id]; ok {
+		return u, nil
+	}
+	return nil, ErrUserNotFound
+}
 
 func (f *fakeStore) FindByIdentity(_ context.Context, provider, subject string) (*User, error) {
 	if u, ok := f.byIdentity[key2(provider, subject)]; ok {
@@ -34,95 +40,45 @@ func (f *fakeStore) FindActiveByEmail(_ context.Context, email string) (*User, e
 	return nil, ErrUserNotFound
 }
 
-func (f *fakeStore) HasIdentity(_ context.Context, userID, provider string) (bool, error) {
-	return f.linked[key2(userID, provider)], nil
-}
-
-func (f *fakeStore) AttachIdentity(_ context.Context, userID, provider, subject string) error {
-	f.attached = append(f.attached, key2(userID, key2(provider, subject)))
-	return nil
-}
-
-func (f *fakeStore) FindByID(_ context.Context, id string) (*User, error) {
-	f.findByIDN++
-	if u, ok := f.findByID[id]; ok {
-		return u, nil
-	}
-	return nil, ErrUserNotFound
-}
-
 func TestResolveByStoredIdentity(t *testing.T) {
 	u := &User{ID: "u1", Email: "old@example.com", Active: true}
-	store := &fakeStore{byIdentity: map[string]*User{key2(ProviderOkta, "subj-1"): u}}
+	store := &fakeStore{byIdentity: map[string]*User{key2(ProviderOkta, "00u-1"): u}}
 
-	got, err := Resolve(t.Context(), store, ProviderOkta, "subj-1", "new-email@example.com")
+	got, err := Resolve(t.Context(), store, ProviderOkta, "00u-1")
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
 	if got.ID != "u1" {
-		t.Errorf("resolved user = %s, want u1 (by stored identity, not email)", got.ID)
-	}
-	if len(store.attached) != 0 {
-		t.Errorf("no new identity must be attached, got %v", store.attached)
+		t.Errorf("resolved user = %s, want u1 (by stored identity)", got.ID)
 	}
 }
 
-func TestResolveEmailFallbackAttachesIdentity(t *testing.T) {
+func TestResolveUnknownSubjectIgnoresMatchingEmail(t *testing.T) {
+	// The subject is unknown but an active user with the assertion's email
+	// exists. Linking by email is exactly what must not happen: the mapping
+	// comes from provisioning, and a matching address proves nothing.
 	u := &User{ID: "u2", Email: "dev@example.com", Active: true}
 	store := &fakeStore{
 		byIdentity: map[string]*User{},
 		byEmail:    map[string]*User{"dev@example.com": u},
-		linked:     map[string]bool{},
 	}
 
-	got, err := Resolve(t.Context(), store, ProviderOkta, "subj-2", "  DEV@example.com ")
-	if err != nil {
-		t.Fatalf("Resolve() error = %v", err)
-	}
-	if got.ID != "u2" {
-		t.Errorf("resolved user = %s, want u2", got.ID)
-	}
-	want := key2("u2", key2(ProviderOkta, "subj-2"))
-	if len(store.attached) != 1 || store.attached[0] != want {
-		t.Errorf("attached = %v, want [%s]", store.attached, want)
-	}
-}
-
-func TestResolveUnknownUser(t *testing.T) {
-	store := &fakeStore{byIdentity: map[string]*User{}, byEmail: map[string]*User{}}
-
-	_, err := Resolve(t.Context(), store, ProviderOkta, "subj-x", "ghost@example.com")
+	_, err := Resolve(t.Context(), store, ProviderOkta, "00u-unknown")
 	if !errors.Is(err, ErrUserNotFound) {
 		t.Fatalf("Resolve() error = %v, want ErrUserNotFound", err)
+	}
+	if len(store.byIdentity) != 0 {
+		t.Errorf("no identity must be attached at sign-in, got %v", store.byIdentity)
 	}
 }
 
 func TestResolveInactiveUserByIdentity(t *testing.T) {
 	u := &User{ID: "u3", Active: false}
-	store := &fakeStore{byIdentity: map[string]*User{key2(ProviderOkta, "subj-3"): u}}
+	store := &fakeStore{byIdentity: map[string]*User{key2(ProviderOkta, "00u-3"): u}}
 
-	_, err := Resolve(t.Context(), store, ProviderOkta, "subj-3", "u3@example.com")
+	_, err := Resolve(t.Context(), store, ProviderOkta, "00u-3")
 	if !errors.Is(err, ErrUserNotFound) {
 		t.Fatalf("Resolve() error = %v, want ErrUserNotFound", err)
-	}
-}
-
-func TestResolveRefusesRelinkByEmail(t *testing.T) {
-	// The user already has an okta identity with another subject: a new
-	// subject with the same email must NOT silently re-link the account.
-	u := &User{ID: "u4", Email: "u4@example.com", Active: true}
-	store := &fakeStore{
-		byIdentity: map[string]*User{},
-		byEmail:    map[string]*User{"u4@example.com": u},
-		linked:     map[string]bool{key2("u4", ProviderOkta): true},
-	}
-
-	_, err := Resolve(t.Context(), store, ProviderOkta, "other-subj", "u4@example.com")
-	if !errors.Is(err, ErrUserNotFound) {
-		t.Fatalf("Resolve() error = %v, want ErrUserNotFound", err)
-	}
-	if len(store.attached) != 0 {
-		t.Errorf("must not attach identity, got %v", store.attached)
 	}
 }
 

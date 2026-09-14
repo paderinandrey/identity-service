@@ -37,6 +37,17 @@
           ]
         }
       }
+    ],
+    "org.keycloak.userprofile.UserProfileProvider": [
+      {
+        "providerId": "declarative-user-profile",
+        "subComponents": {},
+        "config": {
+          "kc.user.profile.config": [
+            "{\"attributes\": [{\"name\": \"username\", \"displayName\": \"${username}\", \"validations\": {\"length\": {\"min\": 3, \"max\": 255}, \"username-prohibited-characters\": {}, \"up-username-not-idn-homograph\": {}}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"multivalued\": false}, {\"name\": \"email\", \"displayName\": \"${email}\", \"validations\": {\"email\": {}, \"length\": {\"max\": 255}}, \"required\": {\"roles\": [\"user\"]}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"multivalued\": false}, {\"name\": \"firstName\", \"displayName\": \"${firstName}\", \"validations\": {\"length\": {\"max\": 255}, \"person-name-prohibited-characters\": {}}, \"required\": {\"roles\": [\"user\"]}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"multivalued\": false}, {\"name\": \"lastName\", \"displayName\": \"${lastName}\", \"validations\": {\"length\": {\"max\": 255}, \"person-name-prohibited-characters\": {}}, \"required\": {\"roles\": [\"user\"]}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\", \"user\"]}, \"multivalued\": false}, {\"name\": \"stableId\", \"displayName\": \"Stable id (NameID)\", \"validations\": {\"length\": {\"max\": 64}}, \"permissions\": {\"view\": [\"admin\"], \"edit\": [\"admin\"]}, \"multivalued\": false}], \"groups\": [{\"name\": \"user-metadata\", \"displayHeader\": \"User metadata\", \"displayDescription\": \"Attributes, which refer to user metadata\"}]}"
+          ]
+        }
+      }
     ]
   },
   "users": [
@@ -53,7 +64,13 @@
           "value": "password",
           "temporary": false
         }
-      ]
+      ],
+      "id": "7a1d9b2c-4e3f-4a5b-8c6d-0e1f2a3b4c5d",
+      "attributes": {
+        "stableId": [
+          "7a1d9b2c-4e3f-4a5b-8c6d-0e1f2a3b4c5d"
+        ]
+      }
     }
   ],
   "clients": [
@@ -74,10 +91,34 @@
         "saml.client.signature": "false",
         "saml.authnstatement": "true",
         "saml.force.post.binding": "true",
-        "saml_name_id_format": "email",
+        "saml_name_id_format": "persistent",
         "saml.signature.algorithm": "RSA_SHA256",
         "saml_assertion_consumer_url_post": "http://localhost:8080/auth/saml/acs"
-      }
+      },
+      "protocolMappers": [
+        {
+          "name": "email",
+          "protocol": "saml",
+          "protocolMapper": "saml-user-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "attribute.nameformat": "Basic",
+            "user.attribute": "email",
+            "attribute.name": "email",
+            "friendly.name": "email"
+          }
+        },
+        {
+          "name": "nameid-stable-id",
+          "protocol": "saml",
+          "protocolMapper": "saml-user-attribute-nameid-mapper",
+          "consentRequired": false,
+          "config": {
+            "mapper.nameid.format": "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+            "user.attribute": "stableId"
+          }
+        }
+      ]
     },
     {
       "clientId": "http://identity.localhost/auth/saml/metadata",
@@ -96,10 +137,34 @@
         "saml.client.signature": "false",
         "saml.authnstatement": "true",
         "saml.force.post.binding": "true",
-        "saml_name_id_format": "email",
+        "saml_name_id_format": "persistent",
         "saml.signature.algorithm": "RSA_SHA256",
         "saml_assertion_consumer_url_post": "http://identity.localhost/auth/saml/acs"
-      }
+      },
+      "protocolMappers": [
+        {
+          "name": "email",
+          "protocol": "saml",
+          "protocolMapper": "saml-user-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "attribute.nameformat": "Basic",
+            "user.attribute": "email",
+            "attribute.name": "email",
+            "friendly.name": "email"
+          }
+        },
+        {
+          "name": "nameid-stable-id",
+          "protocol": "saml",
+          "protocolMapper": "saml-user-attribute-nameid-mapper",
+          "consentRequired": false,
+          "config": {
+            "mapper.nameid.format": "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+            "user.attribute": "stableId"
+          }
+        }
+      ]
     }
   ]
 }
