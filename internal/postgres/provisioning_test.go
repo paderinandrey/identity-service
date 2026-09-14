@@ -19,7 +19,7 @@ func TestProvisioningStore(t *testing.T) {
 		if u.Email != "scim@example.com" {
 			t.Errorf("email not normalized: %q", u.Email)
 		}
-		if err := store.SetActive(ctx, u.ID, false); err != nil {
+		if _, err := store.SetActive(ctx, u.ID, false); err != nil {
 			t.Fatal(err)
 		}
 		got, err := store.FindByEmailAny(ctx, "scim@EXAMPLE.com")
@@ -77,4 +77,41 @@ func TestProvisioningStore(t *testing.T) {
 			t.Errorf("subject theft: err = %v, want ErrDuplicate", err)
 		}
 	})
+}
+
+func TestSetActiveBumpsSessionEpochOnlyOnDeactivation(t *testing.T) {
+	store := newTestStore(t)
+	ctx := t.Context()
+	u := mustCreateUser(t, store, "epoch@example.com", "Epoch")
+	if u.SessionEpoch != 0 {
+		t.Fatalf("new user epoch = %d, want 0", u.SessionEpoch)
+	}
+
+	deactivated, err := store.SetActive(ctx, u.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deactivated.Active || deactivated.SessionEpoch != 1 {
+		t.Errorf("after deactivation: active=%v epoch=%d, want inactive / epoch 1", deactivated.Active, deactivated.SessionEpoch)
+	}
+
+	// Repeating the same transition is a no-op: no second bump.
+	again, err := store.SetActive(ctx, u.ID, false)
+	if err != nil || again.SessionEpoch != 1 {
+		t.Errorf("idempotent deactivation: epoch=%d err=%v, want 1", again.SessionEpoch, err)
+	}
+
+	// Reactivation must not move the epoch, or old sessions could return.
+	reactivated, err := store.SetActive(ctx, u.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reactivated.Active || reactivated.SessionEpoch != 1 {
+		t.Errorf("after reactivation: active=%v epoch=%d, want active / epoch 1", reactivated.Active, reactivated.SessionEpoch)
+	}
+
+	got, err := store.FindByID(ctx, u.ID)
+	if err != nil || got.SessionEpoch != 1 {
+		t.Errorf("persisted epoch = %d, %v; want 1", got.SessionEpoch, err)
+	}
 }

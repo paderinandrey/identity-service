@@ -100,6 +100,9 @@ func (o *Observability) SCIM() *SCIMMetrics { return &SCIMMetrics{o} }
 // Observe counts one provisioning operation of the given type.
 func (m *SCIMMetrics) Observe(op string) { m.o.scimOps.WithLabelValues(op).Inc() }
 
+// RevocationError implements scim.OpMetrics.
+func (m *SCIMMetrics) RevocationError() { m.o.revocationErr.Inc() }
+
 // CacheMetrics instruments a named lookup cache.
 type CacheMetrics struct {
 	o    *Observability

@@ -36,6 +36,7 @@ type Observability struct {
 	publishErrors prometheus.Counter
 	signIns       *prometheus.CounterVec
 	scimOps       *prometheus.CounterVec
+	revocationErr prometheus.Counter
 	cacheRequests *prometheus.CounterVec
 }
 
@@ -89,12 +90,16 @@ func Init(cfg Config) (*Observability, error) {
 		Name: "scim_operations_total",
 		Help: "SCIM provisioning operations by type.",
 	}, []string{"op"})
+	o.revocationErr = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "session_revocation_errors_total",
+		Help: "Deactivations whose sessions could not be destroyed after the revocation was recorded.",
+	})
 	o.cacheRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "cache_requests_total",
 		Help: "Cache lookups by cache name and result.",
 	}, []string{"cache", "result"})
 	o.registry.MustRegister(o.httpDuration, o.httpTotal, o.outboxPending,
-		o.published, o.publishErrors, o.signIns, o.scimOps, o.cacheRequests)
+		o.published, o.publishErrors, o.signIns, o.scimOps, o.revocationErr, o.cacheRequests)
 
 	return o, nil
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -35,7 +36,22 @@ type env struct {
 	server   *httptest.Server
 	store    *postgres.Store
 	sessions *session.Manager
+	killer   *flakyKiller
 	ops      map[string]int
+}
+
+// flakyKiller lets a test take the session store away from deactivation
+// without touching the sessions themselves.
+type flakyKiller struct {
+	inner *session.Manager
+	fail  bool
+}
+
+func (k *flakyKiller) DestroyAllForUser(ctx context.Context, userID string, epoch int64) error {
+	if k.fail {
+		return errors.New("redis: connection refused")
+	}
+	return k.inner.DestroyAllForUser(ctx, userID, epoch)
 }
 
 func newEnv(t *testing.T) *env {
@@ -88,9 +104,10 @@ func newEnv(t *testing.T) *env {
 		MaxConcurrent: 10,
 	}, logger)
 
-	e := &env{store: store, sessions: sessions, ops: map[string]int{}}
+	killer := &flakyKiller{inner: sessions}
+	e := &env{store: store, sessions: sessions, killer: killer, ops: map[string]int{}}
 	mux := http.NewServeMux()
-	handlers := NewHandlers(store, sessions, scimToken, logger)
+	handlers := NewHandlers(store, killer, scimToken, logger)
 	handlers.SetMetrics(opCounter{e.ops})
 	handlers.Register(mux)
 
@@ -98,7 +115,12 @@ func newEnv(t *testing.T) *env {
 	authMux := http.NewServeMux()
 	session.NewHandlers(sessions, testUserSource{store}, nil).Register(authMux)
 	authMux.HandleFunc("POST /test/login", func(w http.ResponseWriter, r *http.Request) {
-		if err := sessions.Start(r.Context(), r.URL.Query().Get("user")); err != nil {
+		u, err := store.FindByID(r.Context(), r.URL.Query().Get("user"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := sessions.Start(r.Context(), u.ID, u.SessionEpoch); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -115,6 +137,7 @@ func newEnv(t *testing.T) *env {
 type opCounter struct{ ops map[string]int }
 
 func (c opCounter) Observe(op string) { c.ops[op]++ }
+func (c opCounter) RevocationError()  { c.ops["revocation_error"]++ }
 
 type testUserSource struct{ store *postgres.Store }
 
@@ -410,4 +433,83 @@ func TestListPagination(t *testing.T) {
 func TestMain(m *testing.M) {
 	fmt.Fprintln(os.Stderr, "scim integration tests use docker-compose PostgreSQL/Redis (run `mise run up`)")
 	os.Exit(m.Run())
+}
+
+func TestDeactivationSurvivesSessionStoreFailure(t *testing.T) {
+	// Codex finding F3: the session store fails while deactivating. The
+	// revocation must already be durable — recorded with the flag in one
+	// transaction — so the call succeeds, the failure is counted, and
+	// reactivation does not bring the old session back.
+	e := newEnv(t)
+	_, created := e.do(t, "POST", "/scim/v2/Users", createUserPayload("flaky@example.com", "Flaky", "ext-fl"), scimToken)
+	id := created["id"].(string)
+
+	loginResp, err := http.Post(e.server.URL+"/test/login?user="+id, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = loginResp.Body.Close()
+	var token string
+	for _, c := range loginResp.Cookies() {
+		if c.Name == cookieName {
+			token = c.Value
+		}
+	}
+	me := func() int {
+		req, _ := http.NewRequest(http.MethodGet, e.server.URL+"/auth/me", nil)
+		req.AddCookie(&http.Cookie{Name: cookieName, Value: token})
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	if me() != http.StatusOK {
+		t.Fatal("session must work before deactivation")
+	}
+
+	e.killer.fail = true
+	resp, patched := e.do(t, "PATCH", "/scim/v2/Users/"+id, map[string]any{
+		"schemas":    []string{schemaPatchOp},
+		"Operations": []map[string]any{{"op": "replace", "value": map[string]any{"active": false}}},
+	}, scimToken)
+	if resp.StatusCode != http.StatusOK || patched["active"] != false {
+		t.Fatalf("deactivate with session store down = %d %v, want 200 (revocation is durable)", resp.StatusCode, patched)
+	}
+	if e.ops["revocation_error"] != 1 {
+		t.Errorf("revocation_error metric = %d, want 1", e.ops["revocation_error"])
+	}
+	e.killer.fail = false
+
+	// Even though no key was deleted, the durable epoch refuses the session.
+	if got := me(); got != http.StatusUnauthorized {
+		t.Errorf("session after failed key deletion = %d, want 401 (durable epoch)", got)
+	}
+
+	resp, reactivated := e.do(t, "PATCH", "/scim/v2/Users/"+id, map[string]any{
+		"schemas":    []string{schemaPatchOp},
+		"Operations": []map[string]any{{"op": "replace", "path": "active", "value": true}},
+	}, scimToken)
+	if resp.StatusCode != http.StatusOK || reactivated["active"] != true {
+		t.Fatalf("reactivate = %d %v", resp.StatusCode, reactivated)
+	}
+	if got := me(); got != http.StatusUnauthorized {
+		t.Errorf("old session after reactivation = %d, want 401: it must never come back", got)
+	}
+
+	// A fresh sign-in works and carries the new generation.
+	relogin, err := http.Post(e.server.URL+"/test/login?user="+id, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = relogin.Body.Close()
+	for _, c := range relogin.Cookies() {
+		if c.Name == cookieName {
+			token = c.Value
+		}
+	}
+	if got := me(); got != http.StatusOK {
+		t.Errorf("new session after reactivation = %d, want 200", got)
+	}
 }

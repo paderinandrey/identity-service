@@ -308,7 +308,7 @@ func (s *Service) handleACS(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("email in assertion differs from directory; provisioning may be behind", "user_id", user.ID)
 	}
 
-	if err := s.sessions.Start(r.Context(), user.ID); err != nil {
+	if err := s.sessions.Start(r.Context(), user.ID, user.SessionEpoch); err != nil {
 		s.logger.Error("failed to start session", "error", err)
 		http.Error(w, "sign-in failed", http.StatusServiceUnavailable)
 		return

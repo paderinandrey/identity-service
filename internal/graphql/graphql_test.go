@@ -124,7 +124,12 @@ func newEnv(t *testing.T) *env {
 	mux := http.NewServeMux()
 	mux.Handle("POST /graphql", gql)
 	mux.HandleFunc("POST /test/login", func(w http.ResponseWriter, r *http.Request) {
-		if err := sessions.Start(r.Context(), r.URL.Query().Get("user")); err != nil {
+		u, err := store.FindByID(r.Context(), r.URL.Query().Get("user"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := sessions.Start(r.Context(), u.ID, u.SessionEpoch); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
