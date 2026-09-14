@@ -11,15 +11,21 @@ set -euo pipefail
 
 CHART=charts/identity-service
 
+# Поиск по отрендеренному YAML — подстрокой bash, а не `echo | grep -q`:
+# grep -q закрывает пайп на первом совпадении, echo ловит SIGPIPE, и
+# pipefail превращает успешную проверку в провал. Ловилось в CI как
+# «write error: Broken pipe» на заведомо присутствующем ресурсе.
+has() { [[ "$out" == *"$1"* ]]; }
+
 echo "== helm lint"
 helm lint "$CHART"
 
 echo "== рендер с дефолтными values (прод-профиль: зависимостей нет)"
 out=$(helm template ci "$CHART")
-echo "$out" | grep -q "kind: Deployment" || { echo "FAIL: нет Deployment"; exit 1; }
-echo "$out" | grep -q "identity-service-migrate" || { echo "FAIL: нет Job миграций"; exit 1; }
-echo "$out" | grep -q "kind: HTTPRoute" && { echo "FAIL: маршруты не должны рендериться без gateway.enabled"; exit 1; }
-echo "$out" | grep -q "component: postgresql" && { echo "FAIL: зависимости не должны рендериться в проде"; exit 1; }
+has "kind: Deployment" || { echo "FAIL: нет Deployment"; exit 1; }
+has "identity-service-migrate" || { echo "FAIL: нет Job миграций"; exit 1; }
+has "kind: HTTPRoute" && { echo "FAIL: маршруты не должны рендериться без gateway.enabled"; exit 1; }
+has "component: postgresql" && { echo "FAIL: зависимости не должны рендериться в проде"; exit 1; }
 echo "PASS: Deployment и Job есть, маршрутов и зависимостей нет"
 
 echo "== рендер с gateway, автоскейлом и мониторингом"
@@ -30,17 +36,17 @@ out=$(helm template ci "$CHART" \
   --set serviceMonitor.enabled=true \
   --set existingSecret=identity-secrets)
 for kind in HTTPRoute SecurityPolicy HorizontalPodAutoscaler ServiceMonitor; do
-  echo "$out" | grep -q "kind: $kind" || { echo "FAIL: нет $kind"; exit 1; }
+  has "kind: $kind" || { echo "FAIL: нет $kind"; exit 1; }
 done
 # Контракт ext-auth целиком: без cookie к auth-сервису проверка сессии
 # всегда 401, без headersToBackend контекст не доедет до upstream.
-echo "$out" | grep -q "headersToExtAuth" || { echo "FAIL: не пробрасывается cookie в ext-auth"; exit 1; }
-echo "$out" | grep -q "X-Identity-Permissions" || { echo "FAIL: не пробрасываются заголовки контекста"; exit 1; }
+has "headersToExtAuth" || { echo "FAIL: не пробрасывается cookie в ext-auth"; exit 1; }
+has "X-Identity-Permissions" || { echo "FAIL: не пробрасываются заголовки контекста"; exit 1; }
 echo "PASS: маршруты, политика ext-auth, HPA и ServiceMonitor на месте"
 
 echo "== рендер оверлея стенда"
 out=$(helm template ci "$CHART" -f "$CHART/values-local.yaml")
-for component in postgresql redis rabbitmq keycloak echo; do
-  echo "$out" | grep -q "component: $component" || { echo "FAIL: в стенде нет $component"; exit 1; }
+for component in postgresql redis rabbitmq keycloak echo stub-subgraph router; do
+  has "component: $component" || { echo "FAIL: в стенде нет $component"; exit 1; }
 done
 echo "PASS: стенд рендерит все зависимости"

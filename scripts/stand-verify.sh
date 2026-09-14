@@ -22,6 +22,9 @@ GW=$(kubectl get gateway -n "$NS" identity-gateway -o jsonpath='{.status.address
 RESOLVE=(--resolve "$HOST:80:$GW" --resolve "$KC_HOST:80:$GW")
 echo "gateway: $GW"
 
+# Проверки подстрок — через here-string, а не `echo | grep -q`: grep -q
+# закрывает пайп на первом совпадении, echo ловит SIGPIPE, и pipefail
+# роняет успешную проверку. Ловилось в CI на чарт-скрипте.
 step() { printf '\n== %s\n' "$1"; }
 pass() { printf 'PASS: %s\n' "$1"; }
 fail() { printf 'FAIL: %s\n' "$1"; exit 1; }
@@ -49,7 +52,7 @@ for _ in 1 2 3 4 5 6; do
   sleep 2
 done
 [ -n "$denied" ] || fail "в логах Envoy нет записи ext_authz_denied для /debug/echo"
-echo "$denied" | grep -q '"upstream_host":null' || fail "запрос всё же дошёл до upstream"
+grep -q '"upstream_host":null' <<< "$denied" || fail "запрос всё же дошёл до upstream"
 pass "/debug/echo без cookie -> $code, envoy: ext_authz_denied, upstream_host: null"
 
 step "4. Провижининг пользователя через SCIM с externalId из IdP"
@@ -57,7 +60,7 @@ KC_USER_ID=$(./scripts/stand-provision-user.sh 2>/tmp/stand-provision.err) \
   || fail "провижининг не прошёл: $(cat /tmp/stand-provision.err)"
 listed=$(curl -s "${RESOLVE[@]}" -H "Authorization: Bearer $SCIM_TOKEN" \
   "http://$HOST/scim/v2/Users?filter=userName%20eq%20%22$USER_EMAIL%22")
-echo "$listed" | grep -q "\"externalId\":\"$KC_USER_ID\"" || fail "SCIM не вернул externalId = $KC_USER_ID: $listed"
+grep -q "\"externalId\":\"$KC_USER_ID\"" <<< "$listed" || fail "SCIM не вернул externalId = $KC_USER_ID: $listed"
 pass "пользователь $USER_EMAIL заведён, externalId = id в Keycloak ($KC_USER_ID)"
 
 step "5. Вход через форму Keycloak (полный SAML-цикл)"
@@ -79,7 +82,7 @@ pass "привязка okta: subject = $subject = persistent NameID = SCIM exter
 step "7. Заголовки контекста доходят до защищённого upstream"
 echoed=$(curl -s "${RESOLVE[@]}" "${COOKIE[@]}" "http://$HOST/debug/echo")
 for header in x-identity-user-id x-identity-email; do
-  echo "$echoed" | tr 'A-Z' 'a-z' | grep -q "$header" || fail "upstream не увидел $header"
+  grep -qi "$header" <<< "$echoed" || fail "upstream не увидел $header"
 done
 uid=$(echo "$echoed" | tr ',' '\n' | grep -i 'x-identity-user-id' | head -1)
 mail=$(echo "$echoed" | tr ',' '\n' | grep -i 'x-identity-email' | head -1)
@@ -87,15 +90,15 @@ pass "upstream получил: $uid $mail"
 
 step "8. /auth/me через proxy"
 me=$(curl -s "${RESOLVE[@]}" "${COOKIE[@]}" "http://$HOST/auth/me")
-echo "$me" | grep -q "$USER_EMAIL" || fail "/auth/me вернул: $me"
+grep -q "$USER_EMAIL" <<< "$me" || fail "/auth/me вернул: $me"
 pass "/auth/me -> $me"
 
 step "9. Федерация: запрос через router в оба сабграфа"
 fed=$(curl -s "${RESOLVE[@]}" "${COOKIE[@]}" -X POST "http://$HOST/graphql" \
   -H 'Content-Type: application/json' \
   -d '{"query":"{ orders { id seenIdentityHeaders owner { id email } } }"}')
-echo "$fed" | grep -q '"x-identity-user-id=' || fail "сабграф не получил контекст: $fed"
-echo "$fed" | grep -q "$USER_EMAIL" || fail "federation-ссылка owner -> User не разрешилась: $fed"
+grep -q '"x-identity-user-id=' <<< "$fed" || fail "сабграф не получил контекст: $fed"
+grep -q "$USER_EMAIL" <<< "$fed" || fail "federation-ссылка owner -> User не разрешилась: $fed"
 pass "router собрал ответ из двух сабграфов; стаб получил контекст, owner разрешён в identity"
 
 step "10. Аноним не доходит до router"
