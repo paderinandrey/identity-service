@@ -211,7 +211,7 @@ func TestRelayPreservesPerUserOrder(t *testing.T) {
 	if _, err := e.store.UpdateUser(t.Context(), user.ID, "ordered@example.com", "V2"); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store.SetActive(t.Context(), user.ID, false); err != nil {
+	if _, err := e.store.SetActive(t.Context(), user.ID, false); err != nil {
 		t.Fatal(err)
 	}
 

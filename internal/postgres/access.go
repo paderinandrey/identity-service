@@ -118,7 +118,8 @@ func (s *AccessStore) EffectivePermissions(ctx context.Context, userID string) (
 		 JOIN role_permissions rp ON rp.role_id = ur.role_id
 		 JOIN permissions p ON p.id = rp.permission_id
 		 JOIN applications a ON a.id = p.application_id
-		 WHERE ur.user_id = $1
+		 JOIN users u ON u.id = ur.user_id
+		 WHERE ur.user_id = $1 AND u.active
 		 ORDER BY 1`, userID)
 	if err != nil {
 		return nil, err

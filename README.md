@@ -201,6 +201,15 @@ the routes are not mounted at all.
   keeps their UUID, history and role assignments, and **all their sessions
   are destroyed immediately** — deactivation in Okta locks the person out
   at once. Reactivation is supported; old sessions do not come back.
+  Revocation is a *generation*, not a deletion: every user carries a
+  session epoch, a session records it at sign-in, and deactivation bumps
+  it in the same transaction that clears the flag. The epoch is mirrored
+  into Redis as a fence checked on every session load **and save**, so a
+  request that was holding the session when it was revoked cannot write it
+  back, and a Redis failure during deactivation cannot undo a revocation
+  that is already in the database (the SCIM call still succeeds; the
+  failure is logged and counted in `session_revocation_errors_total`, and
+  the stale sessions are refused within the revocation delay).
 - Groups are not supported by design: role assignments live in this
   service only (see Access control above).
 
@@ -287,7 +296,9 @@ Two notes for the suites:
   the validate endpoint): standard Go/process collectors,
   `http_request_duration_seconds` / `http_requests_total` by route pattern,
   `outbox_pending` / `events_published_total` / `event_publish_errors_total`,
-  `sign_ins_total{result}`, `scim_operations_total{op}` and
+  `sign_ins_total{result}`, `scim_operations_total{op}`,
+  `session_revocation_errors_total` (deactivations whose sessions could not
+  be destroyed after the revocation was recorded) and
   `cache_requests_total{cache,result}` for the permissions/active caches.
 
 ## Kubernetes

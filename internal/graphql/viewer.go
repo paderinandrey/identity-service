@@ -90,6 +90,11 @@ func authMiddleware(next http.Handler, manager *session.Manager, users session.U
 			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 			return
 		}
+		// Revoked generation: the session outlived a deactivation.
+		if manager.SessionEpoch(ctx) != user.SessionEpoch {
+			writeGraphQLError(w, "authentication required", "UNAUTHENTICATED")
+			return
+		}
 		perms, err := users.Permissions(ctx, userID)
 		if err != nil {
 			logger.Error("viewer resolution failed", "error", err)

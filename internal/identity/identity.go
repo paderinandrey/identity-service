@@ -27,11 +27,16 @@ var (
 
 // User is a unified application user.
 type User struct {
-	ID           string
-	Email        string
-	Name         string
-	Active       bool
-	Version      int64
+	ID      string
+	Email   string
+	Name    string
+	Active  bool
+	Version int64
+	// SessionEpoch is the user's session generation. A session records the
+	// epoch at sign-in and is valid only while it equals this value;
+	// deactivation bumps it, so revocation is durable and reactivation
+	// never brings old sessions back.
+	SessionEpoch int64
 	LastSignInAt *time.Time
 	CreatedAt    time.Time
 	UpdatedAt    time.Time

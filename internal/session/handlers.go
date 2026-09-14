@@ -79,7 +79,16 @@ func (h *Handlers) currentUser(r *http.Request) (*identity.User, error) {
 	if errors.Is(err, identity.ErrUserNotFound) {
 		return nil, nil
 	}
-	return user, err
+	if err != nil {
+		return nil, err
+	}
+	// Second line of defence behind the Redis fence: the durable epoch in
+	// the database, bounded by the revocation delay of the user cache.
+	if h.manager.SessionEpoch(ctx) != user.SessionEpoch {
+		_ = h.manager.Destroy(ctx)
+		return nil, nil
+	}
+	return user, nil
 }
 
 func (h *Handlers) handleMe(w http.ResponseWriter, r *http.Request) {

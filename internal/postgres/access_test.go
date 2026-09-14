@@ -230,3 +230,25 @@ func TestSeedValidation(t *testing.T) {
 		t.Error("role permission not declared on the application must fail validation")
 	}
 }
+
+func TestEffectivePermissionsEmptyForInactiveUser(t *testing.T) {
+	e := newAccessEnv(t)
+	ctx := t.Context()
+	if err := e.access.GrantRole(ctx, "cli", e.user.ID, "gsh", "viewer"); err != nil {
+		t.Fatal(err)
+	}
+	if perms, err := e.access.EffectivePermissions(ctx, e.user.ID); err != nil || len(perms) == 0 {
+		t.Fatalf("active user perms = %v, %v; want non-empty", perms, err)
+	}
+
+	if _, err := e.store.SetActive(ctx, e.user.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	perms, err := e.access.EffectivePermissions(ctx, e.user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(perms) != 0 {
+		t.Errorf("inactive user perms = %v, want empty (assignments are kept, rights are not)", perms)
+	}
+}

@@ -48,7 +48,7 @@ func TestOutboxEvents(t *testing.T) {
 		if _, err := store.UpdateUser(ctx, u.ID, "evt2@example.com", "Renamed"); err != nil {
 			t.Fatal(err)
 		}
-		if err := store.SetActive(ctx, u.ID, false); err != nil {
+		if _, err := store.SetActive(ctx, u.ID, false); err != nil {
 			t.Fatal(err)
 		}
 
@@ -85,7 +85,7 @@ func TestOutboxEvents(t *testing.T) {
 		}
 		before := len(readOutbox(t, store))
 
-		if err := store.SetActive(ctx, u.ID, true); err != nil { // already active
+		if _, err := store.SetActive(ctx, u.ID, true); err != nil { // already active
 			t.Fatal(err)
 		}
 		if _, err := store.UpsertByEmail(ctx, "noop@example.com", "Noop"); err != nil { // same name

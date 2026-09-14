@@ -26,7 +26,7 @@ func (s *Store) SearchUsers(ctx context.Context, search string, includeInactive 
 	users := []*identity.User{}
 	for rows.Next() {
 		var u identity.User
-		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.Active, &u.Version, &u.LastSignInAt, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.Active, &u.Version, &u.SessionEpoch, &u.LastSignInAt, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, err
 		}
 		users = append(users, &u)

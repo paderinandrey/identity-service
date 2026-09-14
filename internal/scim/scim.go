@@ -42,7 +42,9 @@ type UserStore interface {
 	ListUsersPage(ctx context.Context, offset, limit int) ([]*identity.User, int, error)
 	CreateUser(ctx context.Context, email, name string, active bool) (*identity.User, error)
 	UpdateUser(ctx context.Context, id, email, name string) (*identity.User, error)
-	SetActive(ctx context.Context, id string, active bool) error
+	// SetActive flips the flag and returns the resulting user; deactivation
+	// bumps the session epoch in the same transaction.
+	SetActive(ctx context.Context, id string, active bool) (*identity.User, error)
 	FindByIdentity(ctx context.Context, provider, subject string) (*identity.User, error)
 	ReplaceIdentity(ctx context.Context, userID, provider, subject string) error
 	IdentitySubject(ctx context.Context, userID, provider string) (string, error)
@@ -51,11 +53,16 @@ type UserStore interface {
 // OpMetrics counts provisioning operations; nil disables instrumentation.
 type OpMetrics interface {
 	Observe(op string)
+	// RevocationError counts deactivations whose sessions could not be
+	// destroyed in the session store after the revocation was recorded.
+	RevocationError()
 }
 
-// SessionKiller revokes all sessions of a user on deactivation.
+// SessionKiller revokes all sessions of a user on deactivation. epoch is
+// the user's new session generation: the killer raises the fence to it
+// before deleting anything.
 type SessionKiller interface {
-	DestroyAllForUser(ctx context.Context, userID string) error
+	DestroyAllForUser(ctx context.Context, userID string, epoch int64) error
 }
 
 // Handlers serves the SCIM endpoints.
@@ -79,6 +86,12 @@ func NewHandlers(store UserStore, sessions SessionKiller, token string, logger *
 
 // SetMetrics attaches operation instrumentation.
 func (h *Handlers) SetMetrics(m OpMetrics) { h.metrics = m }
+
+func (h *Handlers) countRevocationError() {
+	if h.metrics != nil {
+		h.metrics.RevocationError()
+	}
+}
 
 func (h *Handlers) countOp(op string) {
 	if h.metrics != nil {
@@ -484,24 +497,34 @@ func (h *Handlers) applyState(ctx context.Context, user *identity.User, desired 
 	return user, nil
 }
 
-// deactivate flips the flag and kills every session immediately: the
-// revocation must not wait for the active-flag cache TTL.
+// deactivate flips the flag and kills every session immediately. The
+// revocation itself is durable the moment SetActive commits: the session
+// epoch moves with the flag, so old sessions are invalid whatever happens
+// to the session store afterwards, and reactivation cannot bring them
+// back. Destroying the keys is the immediate part; if that fails the
+// provisioning call still succeeds — the user *is* deactivated — and the
+// failure is visible in the log and the metric. Returning an error here
+// would only invite a retry that finds the user already inactive and
+// skips this branch (Codex review).
 func (h *Handlers) deactivate(ctx context.Context, userID string) error {
-	if err := h.store.SetActive(ctx, userID, false); err != nil {
+	user, err := h.store.SetActive(ctx, userID, false)
+	if err != nil {
 		return err
 	}
-	if err := h.sessions.DestroyAllForUser(ctx, userID); err != nil {
-		// The user is already inactive; validation will fence the rest
-		// within the revocation delay. Do not fail the provisioning call.
-		h.logger.Error("failed to destroy sessions on deactivation", "error", err, "user_id", userID)
+	if err := h.sessions.DestroyAllForUser(ctx, userID, user.SessionEpoch); err != nil {
+		h.logger.Error("failed to destroy sessions on deactivation; revocation is recorded and enforced within the revocation delay",
+			"error", err, "user_id", userID)
+		h.countRevocationError()
 	}
 	h.logger.Info("scim user deactivated", "user_id", userID)
 	h.countOp("deactivate")
 	return nil
 }
 
+// reactivate flips the flag back. The session epoch is left alone, so the
+// sessions revoked by deactivation stay revoked; the user signs in anew.
 func (h *Handlers) reactivate(ctx context.Context, userID string) error {
-	if err := h.store.SetActive(ctx, userID, true); err != nil {
+	if _, err := h.store.SetActive(ctx, userID, true); err != nil {
 		return err
 	}
 	h.logger.Info("scim user reactivated", "user_id", userID)

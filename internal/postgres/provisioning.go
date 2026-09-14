@@ -83,29 +83,38 @@ func (s *Store) UpdateUser(ctx context.Context, id, email, name string) (*identi
 }
 
 // SetActive flips the active flag, bumps the version and records the
-// deactivated/reactivated event. A no-op flip records nothing.
-func (s *Store) SetActive(ctx context.Context, id string, active bool) error {
-	return s.inTx(ctx, func(tx pgx.Tx) error {
-		var current bool
-		err := tx.QueryRow(ctx,
-			"SELECT active FROM users WHERE id = $1 FOR UPDATE", id).Scan(&current)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return identity.ErrUserNotFound
-		}
+// deactivated/reactivated event; it returns the resulting user. A no-op
+// flip records nothing. Deactivation also bumps the session epoch in the
+// same transaction: the revocation is durable before any session key is
+// touched, and reactivation leaves the epoch alone so old sessions stay
+// dead.
+func (s *Store) SetActive(ctx context.Context, id string, active bool) (*identity.User, error) {
+	var user *identity.User
+	err := s.inTx(ctx, func(tx pgx.Tx) error {
+		current, err := s.scanUser(tx.QueryRow(ctx,
+			"SELECT "+userColumns+" FROM users WHERE id = $1 FOR UPDATE", id))
 		if err != nil {
 			return err
 		}
-		if current == active {
+		if current.Active == active {
+			user = current
 			return nil
 		}
-		user, err := s.scanUser(tx.QueryRow(ctx,
-			`UPDATE users SET active = $2, version = version + 1, updated_at = now()
-			 WHERE id = $1 RETURNING `+userColumns, id, active))
+		epochBump := 0
+		if !active {
+			epochBump = 1
+		}
+		updated, err := s.scanUser(tx.QueryRow(ctx,
+			`UPDATE users
+			 SET active = $2, version = version + 1, session_epoch = session_epoch + $3, updated_at = now()
+			 WHERE id = $1 RETURNING `+userColumns, id, active, epochBump))
 		if err != nil {
 			return err
 		}
+		user = updated
 		return recordUserEvent(ctx, tx, events.TypeForActivation(active), user)
 	})
+	return user, err
 }
 
 // ReplaceIdentity links (provider, subject) to the user, replacing the
@@ -136,7 +145,7 @@ func (s *Store) ListUsersPage(ctx context.Context, offset, limit int) ([]*identi
 	users := []*identity.User{}
 	for rows.Next() {
 		var u identity.User
-		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.Active, &u.Version, &u.LastSignInAt, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.Active, &u.Version, &u.SessionEpoch, &u.LastSignInAt, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, 0, err
 		}
 		users = append(users, &u)
