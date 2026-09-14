@@ -73,8 +73,8 @@ func TestProvisioningStore(t *testing.T) {
 			t.Errorf("FindByIdentity after replace = %v, %v", got, err)
 		}
 		// Another user claiming the same subject is a duplicate.
-		if err := store.ReplaceIdentity(ctx, u2.ID, identity.ProviderOkta, "ext-2"); !errors.Is(err, identity.ErrDuplicate) {
-			t.Errorf("subject theft: err = %v, want ErrDuplicate", err)
+		if err := store.ReplaceIdentity(ctx, u2.ID, identity.ProviderOkta, "ext-2"); !errors.Is(err, identity.ErrIdentityTaken) {
+			t.Errorf("subject theft: err = %v, want ErrIdentityTaken", err)
 		}
 	})
 }
@@ -113,5 +113,107 @@ func TestSetActiveBumpsSessionEpochOnlyOnDeactivation(t *testing.T) {
 	got, err := store.FindByID(ctx, u.ID)
 	if err != nil || got.SessionEpoch != 1 {
 		t.Errorf("persisted epoch = %d, %v; want 1", got.SessionEpoch, err)
+	}
+}
+
+func outboxCount(t *testing.T, store *Store) int {
+	t.Helper()
+	var n int
+	if err := store.pool.QueryRow(t.Context(), "SELECT count(*) FROM user_events_outbox").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestProvisionCreateRollsBackOnTakenExternalID(t *testing.T) {
+	store := newTestStore(t)
+	ctx := t.Context()
+	if _, err := store.ProvisionCreate(ctx, identity.Provision{Email: "a@example.com", Name: "A", Active: true, ExternalID: "ext-1"}); err != nil {
+		t.Fatal(err)
+	}
+	before := outboxCount(t, store)
+
+	_, err := store.ProvisionCreate(ctx, identity.Provision{Email: "b@example.com", Name: "B", Active: true, ExternalID: "ext-1"})
+	if !errors.Is(err, identity.ErrIdentityTaken) {
+		t.Fatalf("create with taken externalId: err = %v, want ErrIdentityTaken", err)
+	}
+	if _, err := store.FindByEmailAny(ctx, "b@example.com"); !errors.Is(err, identity.ErrUserNotFound) {
+		t.Errorf("user must be rolled back with the identity, err = %v", err)
+	}
+	if got := outboxCount(t, store); got != before {
+		t.Errorf("outbox grew by %d on a rolled-back create", got-before)
+	}
+
+	// A duplicate email is still reported as such.
+	_, err = store.ProvisionCreate(ctx, identity.Provision{Email: "A@example.com", Name: "Dup", Active: true, ExternalID: "ext-2"})
+	if !errors.Is(err, identity.ErrDuplicate) {
+		t.Errorf("duplicate email: err = %v, want ErrDuplicate", err)
+	}
+}
+
+func TestProvisionApplyIsAtomic(t *testing.T) {
+	store := newTestStore(t)
+	ctx := t.Context()
+	if _, err := store.ProvisionCreate(ctx, identity.Provision{Email: "owner@example.com", Name: "Owner", Active: true, ExternalID: "ext-owner"}); err != nil {
+		t.Fatal(err)
+	}
+	victim, err := store.ProvisionCreate(ctx, identity.Provision{Email: "victim@example.com", Name: "Victim", Active: true, ExternalID: "ext-victim"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := outboxCount(t, store)
+
+	_, _, err = store.ProvisionApply(ctx, victim.ID, identity.Provision{
+		Email: "victim@example.com", Name: "Renamed", Active: false, ExternalID: "ext-owner",
+	})
+	if !errors.Is(err, identity.ErrIdentityTaken) {
+		t.Fatalf("conflicting apply: err = %v, want ErrIdentityTaken", err)
+	}
+	after, err := store.FindByID(ctx, victim.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Name != "Victim" || after.Version != victim.Version || !after.Active || after.SessionEpoch != 0 {
+		t.Errorf("partial writes survived the rollback: %+v", after)
+	}
+	if got := outboxCount(t, store); got != before {
+		t.Errorf("outbox grew by %d on a rolled-back apply", got-before)
+	}
+}
+
+func TestProvisionApplyProfileAndDeactivationInOneTransaction(t *testing.T) {
+	store := newTestStore(t)
+	ctx := t.Context()
+	u, err := store.ProvisionCreate(ctx, identity.Provision{Email: "move@example.com", Name: "Move", Active: true, ExternalID: "ext-m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := outboxCount(t, store)
+
+	updated, outcome, err := store.ProvisionApply(ctx, u.ID, identity.Provision{
+		Email: "moved@example.com", Name: "Moved", Active: false, ExternalID: "ext-m",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !outcome.Deactivated || outcome.Reactivated {
+		t.Errorf("outcome = %+v, want Deactivated", outcome)
+	}
+	if updated.Email != "moved@example.com" || updated.Active || updated.Version != u.Version+2 || updated.SessionEpoch != 1 {
+		t.Errorf("applied user = %+v, want new email, inactive, version +2, epoch 1", updated)
+	}
+	if got := outboxCount(t, store); got != before+2 {
+		t.Errorf("outbox grew by %d, want 2 (updated + deactivated)", got-before)
+	}
+
+	// Applying the same state again is a no-op: nothing changes, nothing is recorded.
+	same, outcome, err := store.ProvisionApply(ctx, u.ID, identity.Provision{
+		Email: "moved@example.com", Name: "Moved", Active: false, ExternalID: "ext-m",
+	})
+	if err != nil || outcome.Deactivated || outcome.Reactivated || same.Version != updated.Version {
+		t.Errorf("idempotent apply: %+v %+v %v", same, outcome, err)
+	}
+	if got := outboxCount(t, store); got != before+2 {
+		t.Errorf("idempotent apply recorded %d events", got-before-2)
 	}
 }

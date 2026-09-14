@@ -40,13 +40,12 @@ type UserStore interface {
 	FindByID(ctx context.Context, id string) (*identity.User, error)
 	FindByEmailAny(ctx context.Context, email string) (*identity.User, error)
 	ListUsersPage(ctx context.Context, offset, limit int) ([]*identity.User, int, error)
-	CreateUser(ctx context.Context, email, name string, active bool) (*identity.User, error)
-	UpdateUser(ctx context.Context, id, email, name string) (*identity.User, error)
-	// SetActive flips the flag and returns the resulting user; deactivation
-	// bumps the session epoch in the same transaction.
-	SetActive(ctx context.Context, id string, active bool) (*identity.User, error)
+	// ProvisionCreate and ProvisionApply each run as one transaction over
+	// profile, external identity, active flag and events; a conflict
+	// leaves nothing behind.
+	ProvisionCreate(ctx context.Context, spec identity.Provision) (*identity.User, error)
+	ProvisionApply(ctx context.Context, id string, spec identity.Provision) (*identity.User, identity.ProvisionOutcome, error)
 	FindByIdentity(ctx context.Context, provider, subject string) (*identity.User, error)
-	ReplaceIdentity(ctx context.Context, userID, provider, subject string) error
 	IdentitySubject(ctx context.Context, userID, provider string) (string, error)
 }
 
@@ -265,19 +264,15 @@ func (h *Handlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.store.CreateUser(ctx, payload.UserName, payload.displayNameOrFallback(), payload.isActive())
-	if errors.Is(err, identity.ErrDuplicate) {
-		writeError(w, http.StatusConflict, "uniqueness", "userName already exists")
-		return
-	}
+	user, err := h.store.ProvisionCreate(ctx, identity.Provision{
+		Email:      payload.UserName,
+		Name:       payload.displayNameOrFallback(),
+		Active:     payload.isActive(),
+		ExternalID: payload.ExternalID,
+	})
 	if err != nil {
-		h.internalError(w, err)
+		h.writeApplyError(w, err)
 		return
-	}
-	if payload.ExternalID != "" {
-		if err := h.store.ReplaceIdentity(ctx, user.ID, identity.ProviderOkta, payload.ExternalID); err != nil {
-			h.logger.Error("failed to store externalId", "error", err, "user_id", user.ID)
-		}
 	}
 	h.logger.Info("scim user created", "user_id", user.ID)
 	h.countOp("create")
@@ -313,11 +308,11 @@ func (h *Handlers) handleReplace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalidValue", "userName is required")
 		return
 	}
-	updated, err := h.applyState(ctx, user, desiredState{
-		email:      payload.UserName,
-		name:       payload.displayNameOrFallback(),
-		active:     payload.isActive(),
-		externalID: payload.ExternalID,
+	updated, err := h.apply(ctx, user.ID, identity.Provision{
+		Email:      payload.UserName,
+		Name:       payload.displayNameOrFallback(),
+		Active:     payload.isActive(),
+		ExternalID: payload.ExternalID,
 	})
 	if err != nil {
 		h.writeApplyError(w, err)
@@ -359,7 +354,7 @@ func (h *Handlers) handlePatch(w http.ResponseWriter, r *http.Request) {
 		h.internalError(w, err)
 		return
 	}
-	desired := desiredState{email: user.Email, name: user.Name, active: user.Active, externalID: externalID}
+	desired := identity.Provision{Email: user.Email, Name: user.Name, Active: user.Active, ExternalID: externalID}
 
 	for _, op := range body.Operations {
 		if !strings.EqualFold(op.Op, "replace") {
@@ -372,7 +367,7 @@ func (h *Handlers) handlePatch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	updated, err := h.applyState(ctx, user, desired)
+	updated, err := h.apply(ctx, user.ID, desired)
 	if err != nil {
 		h.writeApplyError(w, err)
 		return
@@ -381,7 +376,7 @@ func (h *Handlers) handlePatch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.resource(ctx, updated))
 }
 
-func applyPatchOp(desired *desiredState, path string, value json.RawMessage) error {
+func applyPatchOp(desired *identity.Provision, path string, value json.RawMessage) error {
 	switch strings.ToLower(path) {
 	case "":
 		var payload struct {
@@ -394,36 +389,36 @@ func applyPatchOp(desired *desiredState, path string, value json.RawMessage) err
 			return fmt.Errorf("malformed replace value")
 		}
 		if payload.UserName != nil {
-			desired.email = *payload.UserName
+			desired.Email = *payload.UserName
 		}
 		if payload.DisplayName != nil {
-			desired.name = *payload.DisplayName
+			desired.Name = *payload.DisplayName
 		}
 		if payload.ExternalID != nil {
-			desired.externalID = *payload.ExternalID
+			desired.ExternalID = *payload.ExternalID
 		}
 		if payload.Active != nil {
-			desired.active = *payload.Active
+			desired.Active = *payload.Active
 		}
 		return nil
 	case "username":
-		return unmarshalTo(value, &desired.email)
+		return unmarshalTo(value, &desired.Email)
 	case "displayname":
-		return unmarshalTo(value, &desired.name)
+		return unmarshalTo(value, &desired.Name)
 	case "externalid":
-		return unmarshalTo(value, &desired.externalID)
+		return unmarshalTo(value, &desired.ExternalID)
 	case "active":
 		// Okta may send booleans as strings in PATCH values.
 		var b bool
 		if err := json.Unmarshal(value, &b); err == nil {
-			desired.active = b
+			desired.Active = b
 			return nil
 		}
 		var s string
 		if err := json.Unmarshal(value, &s); err == nil {
 			parsed, err := strconv.ParseBool(s)
 			if err == nil {
-				desired.active = parsed
+				desired.Active = parsed
 				return nil
 			}
 		}
@@ -453,91 +448,59 @@ func (h *Handlers) handleDelete(w http.ResponseWriter, r *http.Request) {
 		h.internalError(w, err)
 		return
 	}
-	if err := h.deactivate(ctx, user.ID); err != nil {
-		h.internalError(w, err)
+	// Soft delete is a deactivation with the rest of the state as is; an
+	// empty ExternalID leaves the mapping untouched.
+	if _, err := h.apply(ctx, user.ID, identity.Provision{Email: user.Email, Name: user.Name, Active: false}); err != nil {
+		h.writeApplyError(w, err)
 		return
 	}
 	h.countOp("delete")
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// desiredState is the target user state computed from PUT/PATCH input.
-type desiredState struct {
-	email      string
-	name       string
-	active     bool
-	externalID string
-}
-
-// applyState reconciles the user with the desired state atomically enough
-// for the SCIM client: profile first, then identity, then activation.
-func (h *Handlers) applyState(ctx context.Context, user *identity.User, desired desiredState) (*identity.User, error) {
-	if identity.NormalizeEmail(desired.email) != user.Email || desired.name != user.Name {
-		updated, err := h.store.UpdateUser(ctx, user.ID, desired.email, desired.name)
-		if err != nil {
-			return nil, err
-		}
-		user = updated
+// apply brings the user to the desired state in one store transaction and
+// then, if that transaction deactivated the user, kills the sessions.
+//
+// The order matters: the revocation is durable the moment the transaction
+// commits, because the session epoch moves with the flag. Destroying the
+// keys is the immediate part; if that fails the provisioning call still
+// succeeds — the user *is* deactivated — and the failure is visible in the
+// log and the metric. Returning an error here would only invite a retry
+// that finds the user already inactive and changes nothing.
+func (h *Handlers) apply(ctx context.Context, id string, spec identity.Provision) (*identity.User, error) {
+	user, outcome, err := h.store.ProvisionApply(ctx, id, spec)
+	if err != nil {
+		return nil, err
 	}
-	if desired.externalID != "" {
-		if err := h.store.ReplaceIdentity(ctx, user.ID, identity.ProviderOkta, desired.externalID); err != nil {
-			return nil, err
+	switch {
+	case outcome.Deactivated:
+		if err := h.sessions.DestroyAllForUser(ctx, user.ID, user.SessionEpoch); err != nil {
+			h.logger.Error("failed to destroy sessions on deactivation; revocation is recorded and enforced within the revocation delay",
+				"error", err, "user_id", user.ID)
+			h.countRevocationError()
 		}
-	}
-	if desired.active != user.Active {
-		if desired.active {
-			if err := h.reactivate(ctx, user.ID); err != nil {
-				return nil, err
-			}
-		} else if err := h.deactivate(ctx, user.ID); err != nil {
-			return nil, err
-		}
-		user.Active = desired.active
+		h.logger.Info("scim user deactivated", "user_id", user.ID)
+		h.countOp("deactivate")
+	case outcome.Reactivated:
+		// The session epoch stays put: sessions revoked by deactivation
+		// remain revoked; the user signs in anew.
+		h.logger.Info("scim user reactivated", "user_id", user.ID)
+		h.countOp("reactivate")
 	}
 	return user, nil
 }
 
-// deactivate flips the flag and kills every session immediately. The
-// revocation itself is durable the moment SetActive commits: the session
-// epoch moves with the flag, so old sessions are invalid whatever happens
-// to the session store afterwards, and reactivation cannot bring them
-// back. Destroying the keys is the immediate part; if that fails the
-// provisioning call still succeeds — the user *is* deactivated — and the
-// failure is visible in the log and the metric. Returning an error here
-// would only invite a retry that finds the user already inactive and
-// skips this branch (Codex review).
-func (h *Handlers) deactivate(ctx context.Context, userID string) error {
-	user, err := h.store.SetActive(ctx, userID, false)
-	if err != nil {
-		return err
-	}
-	if err := h.sessions.DestroyAllForUser(ctx, userID, user.SessionEpoch); err != nil {
-		h.logger.Error("failed to destroy sessions on deactivation; revocation is recorded and enforced within the revocation delay",
-			"error", err, "user_id", userID)
-		h.countRevocationError()
-	}
-	h.logger.Info("scim user deactivated", "user_id", userID)
-	h.countOp("deactivate")
-	return nil
-}
-
-// reactivate flips the flag back. The session epoch is left alone, so the
-// sessions revoked by deactivation stay revoked; the user signs in anew.
-func (h *Handlers) reactivate(ctx context.Context, userID string) error {
-	if _, err := h.store.SetActive(ctx, userID, true); err != nil {
-		return err
-	}
-	h.logger.Info("scim user reactivated", "user_id", userID)
-	h.countOp("reactivate")
-	return nil
-}
-
 func (h *Handlers) writeApplyError(w http.ResponseWriter, err error) {
-	if errors.Is(err, identity.ErrDuplicate) {
-		writeError(w, http.StatusConflict, "uniqueness", "value already in use")
-		return
+	switch {
+	case errors.Is(err, identity.ErrIdentityTaken):
+		writeError(w, http.StatusConflict, "uniqueness", "externalId already belongs to another user")
+	case errors.Is(err, identity.ErrDuplicate):
+		writeError(w, http.StatusConflict, "uniqueness", "userName already exists")
+	case errors.Is(err, identity.ErrUserNotFound):
+		writeError(w, http.StatusNotFound, "", "user not found")
+	default:
+		h.internalError(w, err)
 	}
-	h.internalError(w, err)
 }
 
 // --- discovery ---

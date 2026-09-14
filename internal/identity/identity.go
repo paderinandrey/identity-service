@@ -23,7 +23,29 @@ var (
 	ErrUserNotFound = errors.New("user not found")
 	// ErrDuplicate is returned when a uniqueness constraint is violated.
 	ErrDuplicate = errors.New("duplicate value")
+	// ErrIdentityTaken is returned when an external identity (provider,
+	// subject) already belongs to another user.
+	ErrIdentityTaken = errors.New("external identity belongs to another user")
 )
+
+// Provision is the complete state provisioning wants a user to be in.
+// It is applied as one unit: profile, external identity, active flag and
+// the events they produce either all persist or none do.
+type Provision struct {
+	Email  string
+	Name   string
+	Active bool
+	// ExternalID is the IdP's stable id. Empty leaves the existing mapping
+	// untouched (a PATCH that does not mention externalId).
+	ExternalID string
+}
+
+// ProvisionOutcome reports which activation transition an apply performed,
+// so the caller revokes sessions only on a real deactivation.
+type ProvisionOutcome struct {
+	Deactivated bool
+	Reactivated bool
+}
 
 // User is a unified application user.
 type User struct {

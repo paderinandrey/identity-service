@@ -35,6 +35,7 @@ const (
 type env struct {
 	server   *httptest.Server
 	store    *postgres.Store
+	pool     *pgxpool.Pool
 	sessions *session.Manager
 	killer   *flakyKiller
 	ops      map[string]int
@@ -105,7 +106,7 @@ func newEnv(t *testing.T) *env {
 	}, logger)
 
 	killer := &flakyKiller{inner: sessions}
-	e := &env{store: store, sessions: sessions, killer: killer, ops: map[string]int{}}
+	e := &env{store: store, pool: pool, sessions: sessions, killer: killer, ops: map[string]int{}}
 	mux := http.NewServeMux()
 	handlers := NewHandlers(store, killer, scimToken, logger)
 	handlers.SetMetrics(opCounter{e.ops})
@@ -511,5 +512,81 @@ func TestDeactivationSurvivesSessionStoreFailure(t *testing.T) {
 	}
 	if got := me(); got != http.StatusOK {
 		t.Errorf("new session after reactivation = %d, want 200", got)
+	}
+}
+
+func (e *env) outboxCount(t *testing.T) int {
+	t.Helper()
+	var n int
+	if err := e.pool.QueryRow(t.Context(), "SELECT count(*) FROM user_events_outbox").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestCreateWithTakenExternalIDLeavesNothingBehind(t *testing.T) {
+	// Codex F5, scenario 1: the old code answered 201 without the link.
+	e := newEnv(t)
+	resp, _ := e.do(t, "POST", "/scim/v2/Users", createUserPayload("first@example.com", "First", "ext-shared"), scimToken)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("first create = %d", resp.StatusCode)
+	}
+	before := e.outboxCount(t)
+
+	resp, body := e.do(t, "POST", "/scim/v2/Users", createUserPayload("second@example.com", "Second", "ext-shared"), scimToken)
+	if resp.StatusCode != http.StatusConflict || body["scimType"] != "uniqueness" {
+		t.Fatalf("create with taken externalId = %d %v, want 409 uniqueness", resp.StatusCode, body)
+	}
+	if !strings.Contains(fmt.Sprint(body["detail"]), "externalId") {
+		t.Errorf("409 detail must name externalId, got %v", body["detail"])
+	}
+	if _, err := e.store.FindByEmailAny(t.Context(), "second@example.com"); !errors.Is(err, identity.ErrUserNotFound) {
+		t.Errorf("second user must not exist after the conflict, err = %v", err)
+	}
+	if got := e.outboxCount(t); got != before {
+		t.Errorf("outbox grew by %d on a rejected create, want 0", got-before)
+	}
+}
+
+func TestPatchConflictRollsBackEverything(t *testing.T) {
+	// Codex F5, scenario 2: name changed, version bumped, event published,
+	// user still active — all behind a 409. Now: nothing.
+	e := newEnv(t)
+	e.do(t, "POST", "/scim/v2/Users", createUserPayload("owner@example.com", "Owner", "ext-owner"), scimToken)
+	_, created := e.do(t, "POST", "/scim/v2/Users", createUserPayload("victim@example.com", "Victim", "ext-victim"), scimToken)
+	id := created["id"].(string)
+	beforeUser, err := e.store.FindByID(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeEvents := e.outboxCount(t)
+
+	resp, body := e.do(t, "PATCH", "/scim/v2/Users/"+id, map[string]any{
+		"schemas": []string{schemaPatchOp},
+		"Operations": []map[string]any{{"op": "replace", "value": map[string]any{
+			"displayName": "Renamed",
+			"externalId":  "ext-owner",
+			"active":      false,
+		}}},
+	}, scimToken)
+	if resp.StatusCode != http.StatusConflict || body["scimType"] != "uniqueness" {
+		t.Fatalf("conflicting patch = %d %v, want 409 uniqueness", resp.StatusCode, body)
+	}
+
+	after, err := e.store.FindByID(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Name != beforeUser.Name || after.Version != beforeUser.Version || !after.Active || after.SessionEpoch != beforeUser.SessionEpoch {
+		t.Errorf("user changed behind a 409: before %+v, after %+v", beforeUser, after)
+	}
+	if u, err := e.store.FindByIdentity(t.Context(), identity.ProviderOkta, "ext-victim"); err != nil || u.ID != id {
+		t.Errorf("victim's own externalId must be untouched: %v, %v", u, err)
+	}
+	if got := e.outboxCount(t); got != beforeEvents {
+		t.Errorf("outbox grew by %d on a rejected patch, want 0", got-beforeEvents)
+	}
+	if e.ops["deactivate"] != 0 {
+		t.Errorf("deactivate counted %d times on a rolled-back patch", e.ops["deactivate"])
 	}
 }
