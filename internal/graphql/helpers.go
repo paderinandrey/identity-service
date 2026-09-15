@@ -2,12 +2,97 @@ package graphql
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"sync"
 
 	"github.com/paderinandrey/identity-service/internal/access"
 	"github.com/paderinandrey/identity-service/internal/graphql/model"
 	"github.com/paderinandrey/identity-service/internal/identity"
 )
+
+// --- request-scoped prefetch of role assignments ---
+
+// prefetch is the per-request cache a page resolver fills so that
+// User.roles answers without one query per user. It lives behind a
+// pointer in the context: child resolvers do not inherit a parent's
+// context values, but they do see the shared struct.
+type prefetch struct {
+	mu          sync.Mutex
+	assignments map[string][]access.Assignment
+}
+
+type prefetchKey struct{}
+
+func withPrefetch(ctx context.Context) context.Context {
+	return context.WithValue(ctx, prefetchKey{}, &prefetch{})
+}
+
+func prefetchFrom(ctx context.Context) *prefetch {
+	p, _ := ctx.Value(prefetchKey{}).(*prefetch)
+	return p
+}
+
+func (p *prefetch) put(assignments map[string][]access.Assignment, userIDs []string) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.assignments == nil {
+		p.assignments = map[string][]access.Assignment{}
+	}
+	// Every user of the page is recorded, including those without
+	// assignments, so a later lookup is a hit rather than a fallback query.
+	for _, id := range userIDs {
+		p.assignments[id] = assignments[id]
+	}
+}
+
+func (p *prefetch) get(userID string) ([]access.Assignment, bool) {
+	if p == nil {
+		return nil, false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	a, ok := p.assignments[userID]
+	return a, ok
+}
+
+// --- keyset cursor ---
+
+// encodeCursor makes the opaque cursor for a page position.
+func encodeCursor(u *identity.User) string {
+	raw, _ := json.Marshal(identity.PageKey{Name: u.Name, Email: u.Email, ID: u.ID})
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+// decodeCursor parses a cursor issued by encodeCursor.
+func decodeCursor(cursor string) (*identity.PageKey, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return nil, errors.New("malformed cursor")
+	}
+	var key identity.PageKey
+	if err := json.Unmarshal(raw, &key); err != nil || key.ID == "" {
+		return nil, errors.New("malformed cursor")
+	}
+	return &key, nil
+}
+
+func toModelAssignments(assignments []access.Assignment) []*model.RoleAssignment {
+	out := make([]*model.RoleAssignment, len(assignments))
+	for i, a := range assignments {
+		out[i] = &model.RoleAssignment{
+			Application: a.Application,
+			Role:        a.Role,
+			GrantedBy:   a.GrantedBy,
+			GrantedAt:   a.GrantedAt,
+		}
+	}
+	return out
+}
 
 // Helpers for the generated resolvers live outside the *.resolvers.go
 // files: gqlgen rewrites those on generate.

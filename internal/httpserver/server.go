@@ -51,9 +51,15 @@ func New(addr string, logger *slog.Logger, shutdownTimeout time.Duration, opts .
 		opt(s)
 	}
 	s.httpServer = &http.Server{
-		Addr:              addr,
-		Handler:           s.routes(),
+		Addr:    addr,
+		Handler: s.routes(),
+		// Properties of the service, not of an environment: no request
+		// body here is larger than 1 MiB, no handler should run longer
+		// than this, and idle keep-alives from the proxy are bounded.
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 	return s
 }

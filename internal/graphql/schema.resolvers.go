@@ -34,24 +34,59 @@ func (r *queryResolver) Me(ctx context.Context) (*model.Me, error) {
 }
 
 // Users is the resolver for the users field.
-func (r *queryResolver) Users(ctx context.Context, search *string, includeInactive bool) ([]*model.User, error) {
+func (r *queryResolver) Users(ctx context.Context, search *string, includeInactive bool, first int, after *string) (*model.UserConnection, error) {
 	if _, err := requireViewer(ctx); err != nil {
 		return nil, err
+	}
+	if first < 1 || first > maxUsersPage {
+		return nil, errWithCode("first must be between 1 and 200", "BAD_USER_INPUT")
+	}
+	var afterKey *identity.PageKey
+	if after != nil && *after != "" {
+		key, err := decodeCursor(*after)
+		if err != nil {
+			return nil, errWithCode(err.Error(), "BAD_USER_INPUT")
+		}
+		afterKey = key
 	}
 	term := ""
 	if search != nil {
 		term = *search
 	}
-	users, err := r.Directory.SearchUsers(ctx, term, includeInactive, maxUsersPage)
+	// One row more than the page tells whether a next page exists.
+	users, err := r.Directory.SearchUsers(ctx, term, includeInactive, afterKey, first+1)
 	if err != nil {
 		r.Logger.Error("user search failed", "error", err)
 		return nil, errWithCode("user search failed", "INTERNAL")
 	}
-	out := make([]*model.User, len(users))
-	for i, u := range users {
-		out[i] = toModelUser(u)
+	hasNext := len(users) > first
+	if hasNext {
+		users = users[:first]
 	}
-	return out, nil
+
+	// The page's assignments in one query, handed to User.roles through
+	// the request-scoped prefetch instead of one query per user.
+	ids := make([]string, len(users))
+	for i, u := range users {
+		ids[i] = u.ID
+	}
+	assignments, err := r.Access.AssignmentsForUsers(ctx, ids)
+	if err != nil {
+		r.Logger.Error("assignments lookup failed", "error", err)
+		return nil, errWithCode("assignments lookup failed", "INTERNAL")
+	}
+	prefetchFrom(ctx).put(assignments, ids)
+
+	nodes := make([]*model.User, len(users))
+	for i, u := range users {
+		nodes[i] = toModelUser(u)
+	}
+	page := &model.PageInfo{HasNextPage: hasNext}
+	if len(users) > 0 {
+		cursor := encodeCursor(users[len(users)-1])
+		page.EndCursor = &cursor
+	}
+	return &model.UserConnection{Nodes: nodes, PageInfo: page}, nil
 }
 
 // User is the resolver for the user field.
@@ -122,21 +157,16 @@ func (r *queryResolver) AccessAuditLog(ctx context.Context, limit int) ([]*model
 
 // Roles is the resolver for the roles field.
 func (r *userResolver) Roles(ctx context.Context, obj *model.User) ([]*model.RoleAssignment, error) {
+	if assignments, ok := prefetchFrom(ctx).get(obj.ID); ok {
+		return toModelAssignments(assignments), nil
+	}
+	// Single-user paths (user, _entities, mutations) load on demand.
 	assignments, err := r.Access.UserAssignments(ctx, obj.ID)
 	if err != nil {
 		r.Logger.Error("assignments lookup failed", "error", err)
 		return nil, errWithCode("assignments lookup failed", "INTERNAL")
 	}
-	out := make([]*model.RoleAssignment, len(assignments))
-	for i, a := range assignments {
-		out[i] = &model.RoleAssignment{
-			Application: a.Application,
-			Role:        a.Role,
-			GrantedBy:   a.GrantedBy,
-			GrantedAt:   a.GrantedAt,
-		}
-	}
-	return out, nil
+	return toModelAssignments(assignments), nil
 }
 
 // Mutation returns generated.MutationResolver implementation.

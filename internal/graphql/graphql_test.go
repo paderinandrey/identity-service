@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,6 +36,9 @@ type env struct {
 	pool   *pgxpool.Pool
 	store  *postgres.Store
 	access *postgres.AccessStore
+	// counting wraps the access directory the resolvers see, so tests
+	// can assert how many storage calls a query made.
+	counting *countingAccess
 
 	admin *identity.User // holds identity:access.manage
 	alice *identity.User // active, no roles
@@ -119,7 +123,8 @@ func newEnv(t *testing.T) *env {
 	}, logger)
 	users := testUserSource{store: store, access: accessStore}
 
-	gql := NewServer(&Resolver{Directory: store, Access: accessStore, Logger: logger}, sessions, users, logger)
+	e.counting = &countingAccess{AccessDirectory: accessStore, calls: map[string]int{}}
+	gql := NewServer(&Resolver{Directory: store, Access: e.counting, Logger: logger}, sessions, users, logger)
 
 	mux := http.NewServeMux()
 	mux.Handle("POST /graphql", gql)
@@ -147,6 +152,46 @@ func (e *env) mustUser(t *testing.T, email, name string) *identity.User {
 		t.Fatal(err)
 	}
 	return u
+}
+
+// countingAccess counts calls per method around the real access store.
+type countingAccess struct {
+	AccessDirectory
+	mu    sync.Mutex
+	calls map[string]int
+}
+
+func (c *countingAccess) count(method string) {
+	c.mu.Lock()
+	c.calls[method]++
+	c.mu.Unlock()
+}
+
+func (c *countingAccess) get(method string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls[method]
+}
+
+func (c *countingAccess) reset() {
+	c.mu.Lock()
+	c.calls = map[string]int{}
+	c.mu.Unlock()
+}
+
+func (c *countingAccess) UserAssignments(ctx context.Context, userID string) ([]access.Assignment, error) {
+	c.count("UserAssignments")
+	return c.AccessDirectory.UserAssignments(ctx, userID)
+}
+
+func (c *countingAccess) AssignmentsForUsers(ctx context.Context, ids []string) (map[string][]access.Assignment, error) {
+	c.count("AssignmentsForUsers")
+	return c.AccessDirectory.AssignmentsForUsers(ctx, ids)
+}
+
+func (c *countingAccess) ListApplications(ctx context.Context) ([]access.Application, error) {
+	c.count("ListApplications")
+	return c.AccessDirectory.ListApplications(ctx)
 }
 
 // testUserSource mirrors the production userSource without caches.
@@ -273,32 +318,196 @@ func TestMe(t *testing.T) {
 	}
 }
 
+type usersPage struct {
+	Nodes    []map[string]any `json:"nodes"`
+	PageInfo struct {
+		EndCursor   *string `json:"endCursor"`
+		HasNextPage bool    `json:"hasNextPage"`
+	} `json:"pageInfo"`
+}
+
 func TestUsersSearch(t *testing.T) {
 	e := newEnv(t)
 	c := e.login(t, e.alice)
 
-	resp := c.query(t, `query($s: String) { users(search: $s) { name } }`, map[string]any{"s": "ALICE"})
-	users := mustUnmarshal[[]map[string]string](t, resp.Data["users"])
-	if len(users) != 1 || users[0]["name"] != "Alice Doe" {
-		t.Errorf("case-insensitive search = %v", users)
+	resp := c.query(t, `query($s: String) { users(search: $s) { nodes { name } } }`, map[string]any{"s": "ALICE"})
+	page := mustUnmarshal[usersPage](t, resp.Data["users"])
+	if len(page.Nodes) != 1 || page.Nodes[0]["name"] != "Alice Doe" {
+		t.Errorf("case-insensitive search = %v", page.Nodes)
 	}
 
-	all := c.query(t, `{ users { email } }`, nil)
-	for _, u := range mustUnmarshal[[]map[string]string](t, all.Data["users"]) {
+	all := c.query(t, `{ users { nodes { email } } }`, nil)
+	for _, u := range mustUnmarshal[usersPage](t, all.Data["users"]).Nodes {
 		if u["email"] == "bob@example.com" {
 			t.Error("inactive user leaked into default listing")
 		}
 	}
 
-	withInactive := c.query(t, `{ users(includeInactive: true) { email active } }`, nil)
+	withInactive := c.query(t, `{ users(includeInactive: true) { nodes { email active } } }`, nil)
 	found := false
-	for _, u := range mustUnmarshal[[]map[string]any](t, withInactive.Data["users"]) {
+	for _, u := range mustUnmarshal[usersPage](t, withInactive.Data["users"]).Nodes {
 		if u["email"] == "bob@example.com" && u["active"] == false {
 			found = true
 		}
 	}
 	if !found {
 		t.Error("includeInactive must expose the deactivated user")
+	}
+}
+
+func TestUsersPaginationCoversTheDirectoryOnce(t *testing.T) {
+	e := newEnv(t)
+	for i := range 7 {
+		e.mustUser(t, fmt.Sprintf("page%d@example.com", i), fmt.Sprintf("Page %d", i))
+	}
+	c := e.login(t, e.alice)
+
+	seen := map[string]int{}
+	var after *string
+	pages := 0
+	for {
+		resp := c.query(t, `query($a: String) { users(first: 3, after: $a, includeInactive: true) { nodes { id email } pageInfo { endCursor hasNextPage } } }`,
+			map[string]any{"a": after})
+		if resp.errorCode() != "" {
+			t.Fatalf("page %d: %s", pages, resp.errorCode())
+		}
+		page := mustUnmarshal[usersPage](t, resp.Data["users"])
+		pages++
+		for _, n := range page.Nodes {
+			seen[n["email"].(string)]++
+		}
+		if !page.PageInfo.HasNextPage {
+			if page.PageInfo.EndCursor == nil && len(page.Nodes) > 0 {
+				t.Error("a non-empty page must carry an endCursor")
+			}
+			break
+		}
+		if len(page.Nodes) != 3 {
+			t.Errorf("full page has %d nodes, want 3", len(page.Nodes))
+		}
+		after = page.PageInfo.EndCursor
+		if pages > 10 {
+			t.Fatal("pagination does not terminate")
+		}
+	}
+	// 7 created + admin, alice, bob = 10 users, no duplicates, none missing.
+	if len(seen) != 10 {
+		t.Errorf("distinct users over all pages = %d, want 10", len(seen))
+	}
+	for email, n := range seen {
+		if n != 1 {
+			t.Errorf("%s appeared %d times across pages", email, n)
+		}
+	}
+	if pages != 4 {
+		t.Errorf("pages = %d, want 4 (3+3+3+1)", pages)
+	}
+}
+
+func TestUsersRejectsBadPageArguments(t *testing.T) {
+	e := newEnv(t)
+	c := e.login(t, e.alice)
+	for _, q := range []string{
+		`{ users(first: 0) { nodes { id } } }`,
+		`{ users(first: 201) { nodes { id } } }`,
+		`{ users(after: "not-a-cursor") { nodes { id } } }`,
+	} {
+		resp := c.query(t, q, nil)
+		if resp.errorCode() != "BAD_USER_INPUT" || resp.Data["users"] != nil {
+			t.Errorf("%s: code=%q data=%s; want BAD_USER_INPUT and no data", q, resp.errorCode(), resp.Data["users"])
+		}
+	}
+}
+
+func TestUsersPageLoadsAssignmentsOnce(t *testing.T) {
+	e := newEnv(t)
+	for i := range 5 {
+		e.mustUser(t, fmt.Sprintf("roles%d@example.com", i), fmt.Sprintf("Roles %d", i))
+	}
+	c := e.login(t, e.alice)
+	e.counting.reset()
+
+	resp := c.query(t, `{ users(first: 50) { nodes { id roles { application role } } } }`, nil)
+	if resp.errorCode() != "" {
+		t.Fatal(resp.errorCode())
+	}
+	page := mustUnmarshal[usersPage](t, resp.Data["users"])
+	if len(page.Nodes) < 6 {
+		t.Fatalf("page has %d users", len(page.Nodes))
+	}
+	if got := e.counting.get("AssignmentsForUsers"); got != 1 {
+		t.Errorf("AssignmentsForUsers calls = %d, want 1 for the whole page", got)
+	}
+	if got := e.counting.get("UserAssignments"); got != 0 {
+		t.Errorf("UserAssignments calls = %d, want 0 (no per-user fallback on a page)", got)
+	}
+	// The admin's assignment still shows up through the prefetch.
+	adminRoles := 0
+	for _, n := range page.Nodes {
+		if n["id"] == e.admin.ID {
+			adminRoles = len(n["roles"].([]any))
+		}
+	}
+	if adminRoles != 1 {
+		t.Errorf("admin roles via prefetch = %d, want 1", adminRoles)
+	}
+
+	// A single-user path still resolves roles on demand.
+	e.counting.reset()
+	c.query(t, `query($id: ID!) { user(id: $id) { roles { role } } }`, map[string]any{"id": e.admin.ID})
+	if got := e.counting.get("UserAssignments"); got != 1 {
+		t.Errorf("single user: UserAssignments calls = %d, want 1", got)
+	}
+}
+
+func TestQueryOverComplexityBudgetIsRejectedBeforeResolving(t *testing.T) {
+	e := newEnv(t)
+	c := e.login(t, e.alice)
+	e.counting.reset()
+
+	// Ten aliases of a 200-user page with roles: far over budget.
+	var q strings.Builder
+	q.WriteString("{")
+	for i := range 10 {
+		fmt.Fprintf(&q, " u%d: users(first: 200) { nodes { id email name active roles { application role } } }", i)
+	}
+	q.WriteString(" }")
+	resp := c.query(t, q.String(), nil)
+	if len(resp.Errors) == 0 || !strings.Contains(strings.ToLower(resp.Errors[0].Message), "complexity") {
+		t.Fatalf("over-budget query: errors=%v, want a complexity error", resp.Errors)
+	}
+	if len(resp.Data) != 0 {
+		t.Errorf("over-budget query returned data: %v", resp.Data)
+	}
+	if e.counting.get("AssignmentsForUsers")+e.counting.get("UserAssignments") != 0 {
+		t.Error("an over-budget query must not touch storage")
+	}
+
+	// A sane page is well within budget.
+	ok := c.query(t, `{ users(first: 200) { nodes { id email name active roles { application role } } } }`, nil)
+	if ok.errorCode() != "" {
+		t.Errorf("single full page rejected: %v", ok.Errors)
+	}
+}
+
+func TestOversizedBodyIsRejected(t *testing.T) {
+	e := newEnv(t)
+	c := e.login(t, e.alice)
+
+	padding := strings.Repeat(" ", 2<<20) // 2 MiB of whitespace inside the query
+	body, _ := json.Marshal(map[string]any{"query": "{ me { user { id } }" + padding + "}"})
+	resp, err := c.http.Post(c.url+"/graphql", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var out gqlResponse
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if resp.StatusCode == http.StatusOK && len(out.Errors) == 0 {
+		t.Fatalf("oversized body accepted: status=%d data=%v", resp.StatusCode, out.Data)
+	}
+	if len(out.Data) != 0 {
+		t.Errorf("oversized body returned data: %v", out.Data)
 	}
 }
 

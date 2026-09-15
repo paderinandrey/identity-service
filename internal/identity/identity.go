@@ -77,6 +77,15 @@ type ExternalIdentity struct {
 	CreatedAt time.Time
 }
 
+// PageKey is the keyset position of a user in the directory order
+// (name, email, id): the last node of a page, from which the next page
+// starts.
+type PageKey struct {
+	Name  string
+	Email string
+	ID    string
+}
+
 // Store is the persistence contract consumed by identity operations.
 type Store interface {
 	FindByID(ctx context.Context, id string) (*User, error)

@@ -195,3 +195,41 @@ func TestMain(m *testing.M) {
 	fmt.Fprintln(os.Stderr, "postgres integration tests use docker-compose database on localhost:5433")
 	os.Exit(m.Run())
 }
+
+func TestSearchUsersKeysetPaging(t *testing.T) {
+	store := newTestStore(t)
+	ctx := t.Context()
+	// Same name for two users: the (name, email, id) keyset must still
+	// order and page them deterministically.
+	mustCreateUser(t, store, "b@example.com", "Same")
+	mustCreateUser(t, store, "a@example.com", "Same")
+	mustCreateUser(t, store, "c@example.com", "Zed")
+	mustCreateUser(t, store, "d@example.com", "Ann")
+
+	first, err := store.SearchUsers(ctx, "", true, nil, 2)
+	if err != nil || len(first) != 2 {
+		t.Fatalf("first page = %d users, %v", len(first), err)
+	}
+	if first[0].Name != "Ann" || first[1].Email != "a@example.com" {
+		t.Errorf("first page order = %s/%s, %s/%s", first[0].Name, first[0].Email, first[1].Name, first[1].Email)
+	}
+	last := first[len(first)-1]
+	second, err := store.SearchUsers(ctx, "", true, &identity.PageKey{Name: last.Name, Email: last.Email, ID: last.ID}, 2)
+	if err != nil || len(second) != 2 {
+		t.Fatalf("second page = %d users, %v", len(second), err)
+	}
+	if second[0].Email != "b@example.com" || second[1].Name != "Zed" {
+		t.Errorf("second page = %s/%s, %s/%s; want b@example.com then Zed", second[0].Name, second[0].Email, second[1].Name, second[1].Email)
+	}
+	tail := second[len(second)-1]
+	third, err := store.SearchUsers(ctx, "", true, &identity.PageKey{Name: tail.Name, Email: tail.Email, ID: tail.ID}, 2)
+	if err != nil || len(third) != 0 {
+		t.Errorf("page after the end = %d users, %v; want 0", len(third), err)
+	}
+
+	// The search term applies within the keyset as well.
+	same, err := store.SearchUsers(ctx, "same", true, nil, 10)
+	if err != nil || len(same) != 2 {
+		t.Errorf("search 'same' = %d users, %v; want 2", len(same), err)
+	}
+}
