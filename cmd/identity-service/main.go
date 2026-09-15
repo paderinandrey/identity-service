@@ -76,8 +76,10 @@ func run() error {
 		return seedAccess(ctx, cfg, args)
 	case "replay-users":
 		return replayUsers(ctx, cfg)
+	case "requeue-events":
+		return requeueEvents(ctx, cfg)
 	default:
-		return fmt.Errorf("unknown command %q (want serve, migrate, create-user, grant-role, revoke-role, seed-access or replay-users)", cmd)
+		return fmt.Errorf("unknown command %q (want serve, migrate, create-user, grant-role, revoke-role, seed-access, replay-users or requeue-events)", cmd)
 	}
 }
 
@@ -150,6 +152,7 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 
 	relay := events.NewRelay(pool, cfg.RabbitMQURL, cfg.EventsExchange, logger)
 	relay.SetMetrics(obs.Relay())
+	relay.SetRetention(cfg.OutboxRetention)
 	go relay.Run(ctx)
 
 	srv := httpserver.New(cfg.ListenAddr, logger, cfg.ShutdownTimeout,
@@ -355,6 +358,23 @@ func seedAccess(ctx context.Context, cfg config.Config, args []string) error {
 		return err
 	}
 	fmt.Printf("seed-access: %d application(s) reconciled from %s\n", len(seedCfg.Applications), *file)
+	return nil
+}
+
+// requeueEvents returns quarantined outbox events to the queue — the
+// operator's recovery path once the cause recorded in last_error is fixed.
+func requeueEvents(ctx context.Context, cfg config.Config) error {
+	pool, err := postgres.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	n, err := postgres.NewStore(pool).RequeueQuarantined(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("requeue-events: %d quarantined event(s) returned to the queue\n", n)
 	return nil
 }
 

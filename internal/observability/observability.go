@@ -29,15 +29,18 @@ type Observability struct {
 	sentryEnabled bool
 	registry      *prometheus.Registry
 
-	httpDuration  *prometheus.HistogramVec
-	httpTotal     *prometheus.CounterVec
-	outboxPending prometheus.Gauge
-	published     prometheus.Counter
-	publishErrors prometheus.Counter
-	signIns       *prometheus.CounterVec
-	scimOps       *prometheus.CounterVec
-	revocationErr prometheus.Counter
-	cacheRequests *prometheus.CounterVec
+	httpDuration      *prometheus.HistogramVec
+	httpTotal         *prometheus.CounterVec
+	outboxPending     prometheus.Gauge
+	outboxQuarantined prometheus.Gauge
+	outboxOldestAge   prometheus.Gauge
+	published         prometheus.Counter
+	publishErrors     prometheus.Counter
+	unroutable        prometheus.Counter
+	signIns           *prometheus.CounterVec
+	scimOps           *prometheus.CounterVec
+	revocationErr     prometheus.Counter
+	cacheRequests     *prometheus.CounterVec
 }
 
 // Init configures Sentry (when a DSN is set) and builds the metrics
@@ -74,6 +77,18 @@ func Init(cfg Config) (*Observability, error) {
 		Name: "outbox_pending",
 		Help: "User events awaiting publication.",
 	})
+	o.outboxQuarantined = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "outbox_quarantined",
+		Help: "User events parked after exhausting their retry budget; see last_error and requeue-events.",
+	})
+	o.outboxOldestAge = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "outbox_oldest_pending_age_seconds",
+		Help: "Age of the oldest user event still awaiting publication.",
+	})
+	o.unroutable = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "outbox_unroutable_total",
+		Help: "Publish attempts the broker returned because no queue is bound for the routing key; the event waits.",
+	})
 	o.published = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "events_published_total",
 		Help: "User events published to the broker.",
@@ -99,7 +114,8 @@ func Init(cfg Config) (*Observability, error) {
 		Help: "Cache lookups by cache name and result.",
 	}, []string{"cache", "result"})
 	o.registry.MustRegister(o.httpDuration, o.httpTotal, o.outboxPending,
-		o.published, o.publishErrors, o.signIns, o.scimOps, o.revocationErr, o.cacheRequests)
+		o.outboxQuarantined, o.outboxOldestAge, o.published, o.publishErrors, o.unroutable,
+		o.signIns, o.scimOps, o.revocationErr, o.cacheRequests)
 
 	return o, nil
 }

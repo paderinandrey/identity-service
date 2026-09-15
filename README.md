@@ -122,6 +122,7 @@ in.
 | `SCIM_TOKEN` | — (SCIM disabled) | Bearer token for the Okta SCIM client (min 32 chars) |
 | `RABBITMQ_URL` | compose broker on `localhost:5673` | RabbitMQ connection string (user events) |
 | `EVENTS_EXCHANGE` | `identity.events` | Topic exchange for user-change events |
+| `OUTBOX_RETENTION` | `720h` | How long published events stay in the outbox before being trimmed |
 | `SENTRY_DSN` | — (Sentry disabled) | Error-reporting DSN; panics and error-level logs become issues |
 | `E2E_LOGIN_TOKEN` | — (endpoint absent) | Bearer token for programmatic test sessions; rejected at startup in production |
 
@@ -258,6 +259,33 @@ broker outages and service restarts in the outbox. `replay-users` enqueues
 `user.snapshot` events for every user to bootstrap or repair a projection.
 The broker is deliberately excluded from `/readyz`.
 
+How the relay works, and what consumers must do:
+
+- **Leases, not locks.** A short transaction claims a batch under a
+  5-minute lease; publishing with confirms happens outside any
+  transaction; a second short transaction records the outcome. A replica
+  that dies mid-batch releases its rows when the lease expires (possibly
+  producing a duplicate — hence the `message_id` dedup above).
+- **Per-user order on every replica.** A row is claimed only when it is
+  the earliest pending event of its user, so two relays never hold events
+  of the same user at once and versions arrive in order.
+- **Backoff and quarantine.** A failing event retries with exponential
+  backoff (1 s → 5 min) and is quarantined after 10 attempts; it stops
+  blocking the user's later events (the version gap is visible to
+  consumers; `replay-users` repairs a projection). `outbox_quarantined`
+  counts them, `last_error` says why, `requeue-events` returns them to the
+  queue once the cause is fixed.
+- **Topology contract.** This service declares only the durable topic
+  exchange `identity.events`. Consumers declare their own durable queues
+  and bind them (`user.#` or specific keys). Events are published as
+  *mandatory*: an event no queue accepts is returned by the broker and
+  **waits** — it is neither lost nor counted as a failed attempt
+  (`outbox_unroutable_total`) — so deploying this service before its
+  consumers is safe.
+- **Retention.** Published rows are deleted after `OUTBOX_RETENTION`
+  (default 30 days) in small batches; pending and quarantined rows are
+  never trimmed.
+
 ## E2E tests (frontends)
 
 Frontend apps hold no auth state of their own — being "logged in" is
@@ -300,7 +328,9 @@ Two notes for the suites:
 - `GET /internal/metrics` serves Prometheus metrics (internal zone, same as
   the validate endpoint): standard Go/process collectors,
   `http_request_duration_seconds` / `http_requests_total` by route pattern,
-  `outbox_pending` / `events_published_total` / `event_publish_errors_total`,
+  `outbox_pending` / `outbox_quarantined` / `outbox_oldest_pending_age_seconds`
+  (refreshed every relay loop, broker or no broker) / `events_published_total` /
+  `event_publish_errors_total` / `outbox_unroutable_total`,
   `sign_ins_total{result}`, `scim_operations_total{op}`,
   `session_revocation_errors_total` (deactivations whose sessions could not
   be destroyed after the revocation was recorded) and

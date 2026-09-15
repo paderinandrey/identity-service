@@ -79,6 +79,15 @@ func (m *RelayMetrics) PublishError() { m.o.publishErrors.Inc() }
 // PendingSet reports the current number of unpublished events.
 func (m *RelayMetrics) PendingSet(n int) { m.o.outboxPending.Set(float64(n)) }
 
+// QuarantinedSet reports the current number of quarantined events.
+func (m *RelayMetrics) QuarantinedSet(n int) { m.o.outboxQuarantined.Set(float64(n)) }
+
+// OldestPendingAgeSet reports the age of the oldest pending event.
+func (m *RelayMetrics) OldestPendingAgeSet(seconds float64) { m.o.outboxOldestAge.Set(seconds) }
+
+// Unroutable counts publishes returned for lack of a bound queue.
+func (m *RelayMetrics) Unroutable() { m.o.unroutable.Inc() }
+
 // SignInMetrics instruments SSO sign-ins.
 type SignInMetrics struct{ o *Observability }
 
