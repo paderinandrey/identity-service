@@ -63,8 +63,14 @@ func New[V any](capacity int, ttl time.Duration, load Loader[V]) *Cache[V] {
 	}
 }
 
-// SetMetrics attaches instrumentation.
-func (c *Cache[V]) SetMetrics(m Metrics) { c.metrics = m }
+// SetMetrics attaches instrumentation and reports the current size at
+// once, so an idle cache shows zero rather than no series at all.
+func (c *Cache[V]) SetMetrics(m Metrics) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.metrics = m
+	c.sizeChanged()
+}
 
 // SetClock replaces the time source; for tests of expiry.
 func (c *Cache[V]) SetClock(now func() time.Time) { c.now = now }
@@ -76,32 +82,46 @@ func (c *Cache[V]) Len() int {
 	return c.order.Len()
 }
 
+// loadTimeout bounds one shared load: it runs detached from any caller's
+// cancellation, so it needs a deadline of its own.
+const loadTimeout = 5 * time.Second
+
 // Get returns the value for key, loading it once on a miss however many
-// callers ask at the same time.
+// callers ask at the same time. The shared load is detached from the
+// callers' contexts: a caller that disconnects neither cancels the load
+// for the others nor stays blocked past its own deadline (Codex review,
+// PR #8).
 func (c *Cache[V]) Get(ctx context.Context, key string) (V, error) {
+	var zero V
 	if v, ok := c.peek(key); ok {
 		c.observe(true)
 		return v, nil
 	}
 	c.observe(false)
 
-	v, err, _ := c.group.Do(key, func() (any, error) {
+	results := c.group.DoChan(key, func() (any, error) {
 		// Another caller may have loaded it while we waited for the group.
 		if v, ok := c.peek(key); ok {
 			return v, nil
 		}
-		v, err := c.load(ctx, key)
+		loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), loadTimeout)
+		defer cancel()
+		v, err := c.load(loadCtx, key)
 		if err != nil {
 			return nil, err
 		}
 		c.put(key, v)
 		return v, nil
 	})
-	if err != nil {
-		var zero V
-		return zero, err
+	select {
+	case r := <-results:
+		if r.Err != nil {
+			return zero, r.Err
+		}
+		return r.Val.(V), nil
+	case <-ctx.Done():
+		return zero, ctx.Err()
 	}
-	return v.(V), nil
 }
 
 // peek returns a live entry and marks it recently used; an expired entry

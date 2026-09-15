@@ -165,3 +165,81 @@ func TestLoadErrorsAreNotCached(t *testing.T) {
 		t.Errorf("loads = %d, want 2", loads.Load())
 	}
 }
+
+func TestWaitersKeepTheirOwnCancellation(t *testing.T) {
+	// Codex review, PR #8: with a shared load, the first caller's context
+	// must not decide the fate of the others, and a cancelled waiter must
+	// not stay blocked behind a load it no longer wants.
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	c := New(10, time.Minute, func(ctx context.Context, key string) (string, error) {
+		close(entered)
+		select {
+		case <-release:
+			return "v-" + key, nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	})
+
+	// First caller starts the load and then disconnects.
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := c.Get(firstCtx, "k")
+		firstDone <- err
+	}()
+	<-entered
+
+	// Second caller waits on the same load with a healthy context.
+	secondDone := make(chan string, 1)
+	go func() {
+		v, err := c.Get(context.Background(), "k")
+		if err != nil {
+			secondDone <- "err:" + err.Error()
+			return
+		}
+		secondDone <- v
+	}()
+	// Third caller gives up before the load finishes.
+	thirdCtx, cancelThird := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancelThird()
+	thirdDone := make(chan error, 1)
+	go func() {
+		_, err := c.Get(thirdCtx, "k")
+		thirdDone <- err
+	}()
+
+	cancelFirst()
+	if err := <-firstDone; !errors.Is(err, context.Canceled) {
+		t.Errorf("cancelled first caller got %v, want context.Canceled", err)
+	}
+	select {
+	case err := <-thirdDone:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("timed-out waiter got %v, want DeadlineExceeded", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a waiter whose context expired stayed blocked behind the shared load")
+	}
+
+	// The load itself is still running for the healthy waiter.
+	close(release)
+	select {
+	case v := <-secondDone:
+		if v != "v-k" {
+			t.Errorf("healthy waiter got %q; the first caller's cancellation leaked into the shared load", v)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("healthy waiter never got the value")
+	}
+}
+
+func TestSetMetricsReportsSizeImmediately(t *testing.T) {
+	c := New(10, time.Minute, func(_ context.Context, key string) (string, error) { return key, nil })
+	m := &counting{size: -1}
+	c.SetMetrics(m)
+	if m.size != 0 {
+		t.Errorf("size after SetMetrics = %d, want 0 reported at once", m.size)
+	}
+}
