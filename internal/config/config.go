@@ -207,10 +207,25 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("%s must not be set in production", EnvE2ELoginToken)
 	}
 
+	// Inside Kubernetes the environment name must be explicit: a pod that
+	// forgot APP_ENV must not quietly run with development defaults
+	// (insecure cookie, placeholder secrets).
+	if os.Getenv(EnvAppEnv) == "" && os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		return Config{}, fmt.Errorf("%s must be set explicitly when running in Kubernetes", EnvAppEnv)
+	}
+
 	if cfg.IsDevelopment() {
 		applyDevelopmentDefaults(&cfg)
 	} else if missing := missingRequired(cfg); len(missing) > 0 {
 		return Config{}, fmt.Errorf("%s=%s requires environment variables: %s", EnvAppEnv, cfg.AppEnv, strings.Join(missing, ", "))
+	}
+	if !cfg.IsDevelopment() {
+		if len(cfg.RelayStateSecret) < 32 {
+			return Config{}, fmt.Errorf("%s must be at least 32 characters outside development", EnvRelayStateSecret)
+		}
+		if cfg.RelayStateSecret == DefaultRelayStateSecret {
+			return Config{}, fmt.Errorf("%s must not be the development default outside development", EnvRelayStateSecret)
+		}
 	}
 
 	return cfg, nil

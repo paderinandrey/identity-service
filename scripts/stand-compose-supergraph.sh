@@ -58,6 +58,10 @@ headers:
       # у нас нет отдельного machine-канала, сабграф проверяет сессию.
       - op: propagate
         named: cookie
+      # Браузерный Origin: сабграф проверяет его на мутациях (CSRF), и без
+      # проброса каждый запрос выглядел бы как не-браузерный.
+      - op: propagate
+        named: origin
       # Контекст от ext-auth — бизнес-сабграфам.
       - op: propagate
         named: x-identity-user-id

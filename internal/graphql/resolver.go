@@ -50,9 +50,12 @@ type Resolver struct {
 
 // NewServer builds the /graphql handler: session-authenticated viewer,
 // POST transport and introspection for authenticated callers.
-func NewServer(resolver *Resolver, manager *session.Manager, users session.UserSource, logger *slog.Logger) http.Handler {
+// allowedOrigins lists the browser origins permitted to run mutations
+// (base and frontend URLs); non-browser callers send no Origin.
+func NewServer(resolver *Resolver, manager *session.Manager, users session.UserSource, allowedOrigins []string, logger *slog.Logger) http.Handler {
 	srv := handler.New(generated.NewExecutableSchema(generated.Config{Resolvers: resolver}))
 	srv.AddTransport(transport.POST{})
 	srv.Use(extension.Introspection{})
+	srv.AroundOperations(requireTrustedOrigin(session.OriginSet(allowedOrigins)))
 	return authMiddleware(srv, manager, users, logger)
 }

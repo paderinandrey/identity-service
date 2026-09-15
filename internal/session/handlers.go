@@ -39,13 +39,27 @@ type Handlers struct {
 // NewHandlers builds session endpoints. allowedOrigins lists origins
 // permitted to call state-changing endpoints (base and frontend URLs).
 func NewHandlers(manager *Manager, users UserSource, allowedOrigins []string) *Handlers {
-	origins := make(map[string]bool, len(allowedOrigins))
-	for _, o := range allowedOrigins {
+	return &Handlers{manager: manager, users: users, allowedOrigins: OriginSet(allowedOrigins)}
+}
+
+// OriginSet normalises URLs (base URL, frontend URL) into the set of
+// browser origins allowed to drive state-changing, cookie-authenticated
+// requests. One rule for logout and for GraphQL mutations.
+func OriginSet(urls []string) map[string]bool {
+	origins := make(map[string]bool, len(urls))
+	for _, o := range urls {
 		if u, err := url.Parse(o); err == nil && u.Scheme != "" && u.Host != "" {
 			origins[u.Scheme+"://"+u.Host] = true
 		}
 	}
-	return &Handlers{manager: manager, users: users, allowedOrigins: origins}
+	return origins
+}
+
+// OriginAllowed accepts requests without an Origin header (non-browser
+// clients: the router, CLIs, tests) and browser requests whose Origin is
+// in the set.
+func OriginAllowed(allowed map[string]bool, origin string) bool {
+	return origin == "" || allowed[origin]
 }
 
 // Register mounts session routes; the mux must be wrapped with Middleware.
@@ -145,9 +159,5 @@ func (h *Handlers) handleValidate(w http.ResponseWriter, r *http.Request) {
 // originAllowed accepts requests without an Origin header (non-browser
 // clients) and browser requests whose Origin is explicitly allowed.
 func (h *Handlers) originAllowed(r *http.Request) bool {
-	origin := r.Header.Get("Origin")
-	if origin == "" {
-		return true
-	}
-	return h.allowedOrigins[origin]
+	return OriginAllowed(h.allowedOrigins, r.Header.Get("Origin"))
 }

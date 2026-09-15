@@ -128,7 +128,7 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		Directory: store,
 		Access:    accessStore,
 		Logger:    logger,
-	}, sessions, users, logger)
+	}, sessions, users, []string{cfg.BaseURL, cfg.FrontendBaseURL}, logger)
 
 	var samlService *samlsso.Service
 	if cfg.SAMLIdPMetadataURL != "" {
