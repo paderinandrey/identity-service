@@ -15,6 +15,9 @@ func (s *Store) SearchUsers(ctx context.Context, search string, includeInactive 
 	// Keyset paging over the display order: rows strictly after the
 	// cursor position in (name, email, id). The caller asks for one row
 	// more than the page to learn whether a next page exists.
+	// Presence of a cursor is its own parameter: a valid user may have an
+	// empty name, so no field of the key can double as the sentinel
+	// (Codex review, PR #7).
 	afterName, afterEmail, afterID := "", "", ""
 	if after != nil {
 		afterName, afterEmail, afterID = after.Name, after.Email, after.ID
@@ -23,9 +26,9 @@ func (s *Store) SearchUsers(ctx context.Context, search string, includeInactive 
 		"SELECT "+userColumns+` FROM users
 		 WHERE (name ILIKE '%' || $1 || '%' OR email::text ILIKE '%' || $1 || '%')
 		   AND (active OR $2)
-		   AND ($4 = '' OR (name, email::text, id::text) > ($4, $5, $6))
+		   AND (NOT $7 OR (name, email::text, id::text) > ($4, $5, $6))
 		 ORDER BY name, email, id
-		 LIMIT $3`, search, includeInactive, limit, afterName, afterEmail, afterID)
+		 LIMIT $3`, search, includeInactive, limit, afterName, afterEmail, afterID, after != nil)
 	if err != nil {
 		return nil, err
 	}

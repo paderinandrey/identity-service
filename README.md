@@ -181,8 +181,9 @@ the requested size (`users` by `first`, `accessAuditLog` by `limit`,
 ten times is rejected up front. `users` is a keyset-paged connection —
 `users(first: 50, after: <endCursor>) { nodes { … } pageInfo { endCursor
 hasNextPage } }` — with `first` capped at 200; a page's role assignments
-are loaded in one query. The HTTP server has 30 s read/write timeouts and
-a 120 s idle timeout.
+are loaded in one query. Federation `_entities` batches are capped at 200
+representations per operation, checked before execution. The HTTP server
+has 30 s read/write timeouts and a 120 s idle timeout.
 
 `POST /graphql` is an Apollo Federation v2 subgraph (`User` is an entity
 keyed by `id`); authentication is the browser session cookie. Directory

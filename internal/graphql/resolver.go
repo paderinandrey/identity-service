@@ -27,6 +27,10 @@ const (
 	maxAuditPage     = 100
 	maxBodyBytes     = 1 << 20 // same cap as SCIM and SAML
 	complexityBudget = 2000
+	// maxEntityBatch bounds _entities representations per operation: the
+	// complexity budget prices the selection, not the list of keys, and
+	// each key is a lookup (Codex review, PR #7).
+	maxEntityBatch = maxUsersPage
 	// applicationsWeight stands in for the directory size in complexity
 	// arithmetic: a handful of applications with nested roles.
 	applicationsWeight = 20
@@ -79,6 +83,7 @@ func NewServer(resolver *Resolver, manager *session.Manager, users session.UserS
 	srv.AddTransport(transport.POST{})
 	srv.Use(extension.Introspection{})
 	srv.Use(extension.FixedComplexityLimit(complexityBudget))
+	srv.AroundOperations(limitEntityBatches)
 
 	capped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)

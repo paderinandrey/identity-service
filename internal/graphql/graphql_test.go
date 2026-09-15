@@ -663,3 +663,43 @@ func TestMain(m *testing.M) {
 	fmt.Fprintln(os.Stderr, "graphql integration tests use docker-compose PostgreSQL/Redis (run `mise run up`)")
 	os.Exit(m.Run())
 }
+
+func TestEntityBatchIsCapped(t *testing.T) {
+	// Codex review, PR #7: the complexity budget prices the selection,
+	// not the key list, so _entities needs a hard cap on representations.
+	e := newEnv(t)
+	c := e.login(t, e.alice)
+
+	reps := func(n int) []map[string]any {
+		out := make([]map[string]any, n)
+		for i := range out {
+			out[i] = map[string]any{"__typename": "User", "id": e.alice.ID}
+		}
+		return out
+	}
+	q := `query($r: [_Any!]!) { _entities(representations: $r) { ... on User { id email } } }`
+
+	over := c.query(t, q, map[string]any{"r": reps(201)})
+	if over.errorCode() != "BAD_USER_INPUT" || over.Data["_entities"] != nil {
+		t.Fatalf("201 representations: code=%q data=%s; want BAD_USER_INPUT and no data", over.errorCode(), over.Data["_entities"])
+	}
+
+	ok := c.query(t, q, map[string]any{"r": reps(200)})
+	if ok.errorCode() != "" {
+		t.Fatalf("200 representations rejected: %v", ok.Errors)
+	}
+	if got := len(mustUnmarshal[[]map[string]any](t, ok.Data["_entities"])); got != 200 {
+		t.Errorf("resolved entities = %d, want 200", got)
+	}
+
+	// An inline literal list is counted the same way as a variable.
+	var inline strings.Builder
+	inline.WriteString(`{ _entities(representations: [`)
+	for range 201 {
+		fmt.Fprintf(&inline, `{__typename: "User", id: %q},`, e.alice.ID)
+	}
+	inline.WriteString(`]) { ... on User { id } } }`)
+	if resp := c.query(t, inline.String(), nil); resp.errorCode() != "BAD_USER_INPUT" {
+		t.Errorf("inline batch of 201: code=%q, want BAD_USER_INPUT", resp.errorCode())
+	}
+}

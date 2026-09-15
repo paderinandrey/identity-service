@@ -233,3 +233,22 @@ func TestSearchUsersKeysetPaging(t *testing.T) {
 		t.Errorf("search 'same' = %d users, %v; want 2", len(same), err)
 	}
 }
+
+func TestSearchUsersPagesPastAnEmptyName(t *testing.T) {
+	// Codex review, PR #7: a user may have an empty name, and "" sorts
+	// first. The cursor's presence must be its own signal, or the page
+	// after such a user is the first page again, forever.
+	store := newTestStore(t)
+	ctx := t.Context()
+	nameless := mustCreateUser(t, store, "nameless@example.com", "")
+	mustCreateUser(t, store, "named@example.com", "Named")
+
+	first, err := store.SearchUsers(ctx, "", true, nil, 1)
+	if err != nil || len(first) != 1 || first[0].ID != nameless.ID {
+		t.Fatalf("first page = %v, %v; want the nameless user", first, err)
+	}
+	second, err := store.SearchUsers(ctx, "", true, &identity.PageKey{Name: "", Email: nameless.Email, ID: nameless.ID}, 1)
+	if err != nil || len(second) != 1 || second[0].Email != "named@example.com" {
+		t.Fatalf("page after an empty-name cursor = %v, %v; want the next user, not the first page again", second, err)
+	}
+}

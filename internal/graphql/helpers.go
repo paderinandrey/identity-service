@@ -5,7 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
+
+	"github.com/99designs/gqlgen/graphql"
+	"github.com/vektah/gqlparser/v2/ast"
+	"github.com/vektah/gqlparser/v2/gqlerror"
 
 	"github.com/paderinandrey/identity-service/internal/access"
 	"github.com/paderinandrey/identity-service/internal/graphql/model"
@@ -139,4 +144,46 @@ func toModelUser(u *identity.User) *model.User {
 		Active:       u.Active,
 		LastSignInAt: u.LastSignInAt,
 	}
+}
+
+// --- federation batch cap ---
+
+// limitEntityBatches refuses an operation whose _entities field carries
+// more representations than maxEntityBatch, before any resolver runs.
+// Representations arrive as a variable (routers) or as a literal list.
+func limitEntityBatches(ctx context.Context, next graphql.OperationHandler) graphql.ResponseHandler {
+	rc := graphql.GetOperationContext(ctx)
+	if rc == nil || rc.Operation == nil {
+		return next(ctx)
+	}
+	for _, sel := range rc.Operation.SelectionSet {
+		field, ok := sel.(*ast.Field)
+		if !ok || field.Name != "_entities" {
+			continue
+		}
+		n := representationCount(field, rc.Variables)
+		if n > maxEntityBatch {
+			err := errWithCode(fmt.Sprintf("_entities batch of %d exceeds the limit of %d", n, maxEntityBatch), "BAD_USER_INPUT")
+			return func(context.Context) *graphql.Response {
+				return &graphql.Response{Errors: []*gqlerror.Error{err}}
+			}
+		}
+	}
+	return next(ctx)
+}
+
+func representationCount(field *ast.Field, vars map[string]any) int {
+	arg := field.Arguments.ForName("representations")
+	if arg == nil || arg.Value == nil {
+		return 0
+	}
+	switch arg.Value.Kind {
+	case ast.Variable:
+		if list, ok := vars[arg.Value.Raw].([]any); ok {
+			return len(list)
+		}
+	case ast.ListValue:
+		return len(arg.Value.Children)
+	}
+	return 0
 }
