@@ -122,3 +122,9 @@ func (m *CacheMetrics) Observe(hit bool) {
 	}
 	m.o.cacheRequests.WithLabelValues(m.name, result).Inc()
 }
+
+// SizeSet reports the cache's current entry count.
+func (m *CacheMetrics) SizeSet(n int) { m.o.cacheEntries.WithLabelValues(m.name).Set(float64(n)) }
+
+// Evicted counts one capacity eviction.
+func (m *CacheMetrics) Evicted() { m.o.cacheEvictions.WithLabelValues(m.name).Inc() }

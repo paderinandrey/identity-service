@@ -9,8 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
+
+	"github.com/paderinandrey/identity-service/internal/cache"
 )
 
 // Journal action names.
@@ -129,61 +130,25 @@ func SplitRoleRef(ref string) (app, role string, err error) {
 	return app, role, nil
 }
 
-// CacheMetrics observes cache lookups; nil disables instrumentation.
-type CacheMetrics interface {
-	Observe(hit bool)
-}
-
 // PermissionsCache caches effective permissions for a bounded revocation
-// delay, mirroring identity.ActiveChecker.
+// delay, mirroring identity.UserCache; capacity, expiry and coalescing of
+// concurrent misses come from the shared cache package.
 type PermissionsCache struct {
-	store Store
-	ttl   time.Duration
-
-	mu      sync.Mutex
-	cache   map[string]permsEntry
-	now     func() time.Time
-	metrics CacheMetrics
+	inner *cache.Cache[[]string]
 }
 
-type permsEntry struct {
-	perms   []string
-	expires time.Time
-}
-
-// NewPermissionsCache builds a cache with the given revocation delay.
-func NewPermissionsCache(store Store, ttl time.Duration) *PermissionsCache {
-	return &PermissionsCache{
-		store: store,
-		ttl:   ttl,
-		cache: make(map[string]permsEntry),
-		now:   time.Now,
-	}
+// NewPermissionsCache builds a cache with the given revocation delay and
+// capacity.
+func NewPermissionsCache(store Store, ttl time.Duration, capacity int) *PermissionsCache {
+	return &PermissionsCache{inner: cache.New(capacity, ttl, func(ctx context.Context, id string) ([]string, error) {
+		return store.EffectivePermissions(ctx, id)
+	})}
 }
 
 // SetMetrics attaches cache instrumentation.
-func (c *PermissionsCache) SetMetrics(m CacheMetrics) { c.metrics = m }
+func (c *PermissionsCache) SetMetrics(m cache.Metrics) { c.inner.SetMetrics(m) }
 
 // EffectivePermissions returns the user's permissions, at most ttl stale.
 func (c *PermissionsCache) EffectivePermissions(ctx context.Context, userID string) ([]string, error) {
-	c.mu.Lock()
-	entry, ok := c.cache[userID]
-	c.mu.Unlock()
-	hit := ok && c.now().Before(entry.expires)
-	if c.metrics != nil {
-		c.metrics.Observe(hit)
-	}
-	if hit {
-		return entry.perms, nil
-	}
-
-	perms, err := c.store.EffectivePermissions(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	c.mu.Lock()
-	c.cache[userID] = permsEntry{perms: perms, expires: c.now().Add(c.ttl)}
-	c.mu.Unlock()
-	return perms, nil
+	return c.inner.Get(ctx, userID)
 }

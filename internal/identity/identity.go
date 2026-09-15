@@ -6,8 +6,9 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"sync"
 	"time"
+
+	"github.com/paderinandrey/identity-service/internal/cache"
 )
 
 // Identity providers.
@@ -107,76 +108,35 @@ func Resolve(ctx context.Context, store Store, provider, subject string) (*User,
 	return user, nil
 }
 
-// CacheMetrics observes cache lookups; nil disables instrumentation.
-type CacheMetrics interface {
-	Observe(hit bool)
-}
-
 // UserCache caches user records for a bounded revocation delay, so the
 // session hot path (validate is called on every ecosystem request) does
 // not hit PostgreSQL every time. Both the record and the active flag are
-// served from one entry; misses are cached too, so unknown ids cannot be
-// used to hammer the database.
+// served from one entry; misses are cached too (as nil), so unknown ids
+// cannot be used to hammer the database. Capacity, expiry and the
+// coalescing of concurrent misses live in the shared cache package.
 type UserCache struct {
-	store Store
-	ttl   time.Duration
-
-	mu      sync.Mutex
-	cache   map[string]userEntry
-	now     func() time.Time
-	metrics CacheMetrics
+	inner *cache.Cache[*User]
 }
 
-type userEntry struct {
-	user    *User // nil when the user does not exist
-	expires time.Time
-}
-
-// NewUserCache builds a cache with the given revocation delay.
-func NewUserCache(store Store, ttl time.Duration) *UserCache {
-	return &UserCache{
-		store: store,
-		ttl:   ttl,
-		cache: make(map[string]userEntry),
-		now:   time.Now,
-	}
+// NewUserCache builds a cache with the given revocation delay and
+// capacity.
+func NewUserCache(store Store, ttl time.Duration, capacity int) *UserCache {
+	return &UserCache{inner: cache.New(capacity, ttl, func(ctx context.Context, id string) (*User, error) {
+		user, err := store.FindByID(ctx, id)
+		if errors.Is(err, ErrUserNotFound) {
+			return nil, nil // negative entry: known to not exist
+		}
+		return user, err
+	})}
 }
 
 // SetMetrics attaches cache instrumentation.
-func (c *UserCache) SetMetrics(m CacheMetrics) { c.metrics = m }
-
-// lookup returns the cached user (nil means "known to not exist"),
-// fetching and caching it on a miss.
-func (c *UserCache) lookup(ctx context.Context, userID string) (*User, error) {
-	c.mu.Lock()
-	entry, ok := c.cache[userID]
-	c.mu.Unlock()
-	hit := ok && c.now().Before(entry.expires)
-	if c.metrics != nil {
-		c.metrics.Observe(hit)
-	}
-	if hit {
-		return entry.user, nil
-	}
-
-	user, err := c.store.FindByID(ctx, userID)
-	if err != nil && !errors.Is(err, ErrUserNotFound) {
-		return nil, err
-	}
-	if errors.Is(err, ErrUserNotFound) {
-		user = nil
-	}
-
-	c.mu.Lock()
-	c.cache[userID] = userEntry{user: user, expires: c.now().Add(c.ttl)}
-	c.mu.Unlock()
-	return user, nil
-}
+func (c *UserCache) SetMetrics(m cache.Metrics) { c.inner.SetMetrics(m) }
 
 // FindByID returns the user, at most ttl stale; ErrUserNotFound when the
 // user does not exist.
 func (c *UserCache) FindByID(ctx context.Context, userID string) (*User, error) {
-	user, err := c.lookup(ctx, userID)
+	user, err := c.inner.Get(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +148,7 @@ func (c *UserCache) FindByID(ctx context.Context, userID string) (*User, error) 
 
 // IsActive reports whether the user is currently active, at most ttl stale.
 func (c *UserCache) IsActive(ctx context.Context, userID string) (bool, error) {
-	user, err := c.lookup(ctx, userID)
+	user, err := c.inner.Get(ctx, userID)
 	if err != nil {
 		return false, err
 	}
