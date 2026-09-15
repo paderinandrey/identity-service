@@ -269,8 +269,11 @@ How the relay works, and what consumers must do:
 - **Per-user order on every replica.** A row is claimed only when it is
   the earliest pending event of its user, so two relays never hold events
   of the same user at once and versions arrive in order.
-- **Backoff and quarantine.** A failing event retries with exponential
-  backoff (1 s → 5 min) and is quarantined after 10 attempts; it stops
+- **Backoff and quarantine.** Only a failure *of the message* (a broker
+  nack) spends its retry budget — exponential backoff (1 s → 5 min),
+  quarantine after 10 attempts. A broker outage is a transport failure:
+  the row is released untouched and the relay as a whole backs off, so
+  an outage never quarantines valid events. A quarantined event stops
   blocking the user's later events (the version gap is visible to
   consumers; `replay-users` repairs a projection). `outbox_quarantined`
   counts them, `last_error` says why, `requeue-events` returns them to the

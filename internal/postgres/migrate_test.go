@@ -144,9 +144,10 @@ func TestMigration00010BackfillsOutboxUserID(t *testing.T) {
 	}
 	if _, err := sqlDB.ExecContext(ctx, `
 		INSERT INTO users (id, email, name) VALUES ('44444444-4444-4444-4444-444444444444', 'old@example.com', 'Old');
-		INSERT INTO user_events_outbox (event_type, payload) VALUES
-		  ('identity.user.created', '{"user":{"id":"44444444-4444-4444-4444-444444444444"}}'::jsonb),
-		  ('identity.user.snapshot', '{}'::jsonb);`); err != nil {
+		INSERT INTO user_events_outbox (event_type, payload, published_at) VALUES
+		  ('identity.user.created', '{"user":{"id":"44444444-4444-4444-4444-444444444444"}}'::jsonb, NULL),
+		  ('identity.user.updated', '{"user":{"id":"44444444-4444-4444-4444-444444444444"}}'::jsonb, now()),
+		  ('identity.user.snapshot', '{}'::jsonb, NULL);`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -159,7 +160,9 @@ func TestMigration00010BackfillsOutboxUserID(t *testing.T) {
 		        count(*) FILTER (WHERE user_id IS NULL) FROM user_events_outbox`).Scan(&withUser, &withoutUser); err != nil {
 		t.Fatal(err)
 	}
-	if withUser != 1 || withoutUser != 1 {
-		t.Errorf("backfill: rows with user = %d, without = %d; want 1 and 1 (payload without a user stays NULL)", withUser, withoutUser)
+	// Pending row backfilled; published history and a payload without a
+	// user are left alone.
+	if withUser != 1 || withoutUser != 2 {
+		t.Errorf("backfill: rows with user = %d, without = %d; want 1 and 2 (only pending rows are backfilled)", withUser, withoutUser)
 	}
 }

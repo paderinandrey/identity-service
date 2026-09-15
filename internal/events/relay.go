@@ -163,6 +163,17 @@ type outboxRow struct {
 // backing off. One short transaction; the lease is what other replicas
 // see, so nothing is held open while the broker is talked to.
 func (r *Relay) claim(ctx context.Context) ([]outboxRow, error) {
+	// Rows written by a replica of the previous release carry the user
+	// only in the payload (user_id NULL). NULL never equals NULL, so the
+	// head-of-line predicate would let two relays hold events of one
+	// user. Repair pending rows before selecting; bounded by the pending
+	// set, a no-op once the old writers are gone.
+	if _, err := r.pool.Exec(ctx,
+		`UPDATE user_events_outbox
+		 SET user_id = (payload -> 'user' ->> 'id')::uuid
+		 WHERE user_id IS NULL AND published_at IS NULL AND payload -> 'user' ->> 'id' IS NOT NULL`); err != nil {
+		return nil, fmt.Errorf("repair outbox user ids: %w", err)
+	}
 	rows, err := r.pool.Query(ctx,
 		`WITH picked AS (
 		   SELECT o.id FROM user_events_outbox o
@@ -198,7 +209,10 @@ func (r *Relay) claim(ctx context.Context) ([]outboxRow, error) {
 
 type outcome struct {
 	row outboxRow
-	err error // nil: published; ErrUnroutable: waiting; other: failed
+	// err: nil — published; ErrUnroutable — waiting for a consumer;
+	// ErrTransport — the broker, not the message, failed (lease released,
+	// no attempt spent); anything else — a failure of this message.
+	err error
 	// tried is false for rows the batch never reached; their lease is
 	// simply released.
 	tried bool
@@ -231,9 +245,9 @@ func (r *Relay) drainOnce(ctx context.Context) (int, error) {
 		cancel()
 		outcomes[i].tried = true
 		outcomes[i].err = err
-		if err != nil && !errors.Is(err, ErrUnroutable) {
-			// A publish failure is most likely the connection: stop the
-			// batch, let the rest go back to the queue, reconnect.
+		if errors.Is(err, ErrTransport) {
+			// The broker is gone: stop the batch, release the rest,
+			// reconnect after the relay-level backoff. No row is charged.
 			stop = err
 		}
 	}
@@ -259,7 +273,10 @@ func (r *Relay) settle(ctx context.Context, outcomes []outcome) (int, error) {
 	published, failed, unroutable := 0, 0, 0
 	for _, o := range outcomes {
 		switch {
-		case !o.tried:
+		case !o.tried, errors.Is(o.err, ErrTransport):
+			// Not the message's fault: back to the queue untouched. A
+			// broker outage must never quarantine valid events (Codex
+			// review, PR #6).
 			err = releaseLease(ctx, tx, o.row.id)
 		case o.err == nil:
 			err = markPublished(ctx, tx, o.row.id)

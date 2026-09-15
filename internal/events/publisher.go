@@ -10,10 +10,21 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// ErrUnroutable reports that the broker accepted the message but no queue
-// was bound for its routing key. It is a topology condition, not a
-// failure: the event waits for a consumer instead of burning attempts.
-var ErrUnroutable = errors.New("no queue bound for the event")
+var (
+	// ErrUnroutable reports that the broker accepted the message but no
+	// queue was bound for its routing key. It is a topology condition, not
+	// a failure: the event waits for a consumer instead of burning
+	// attempts.
+	ErrUnroutable = errors.New("no queue bound for the event")
+	// ErrTransport wraps connection-level failures — dial, channel,
+	// confirm timeout, closed connection. They say nothing about the
+	// message, so they must not spend its retry budget: the row is
+	// released and the relay backs off as a whole.
+	ErrTransport = errors.New("broker transport failure")
+	// ErrRejected is a broker nack of this particular message; the only
+	// per-message failure the broker can report.
+	ErrRejected = errors.New("broker rejected the message")
+)
 
 // Message is one outbox event as handed to a Publisher.
 type Message struct {
@@ -55,20 +66,20 @@ func (p *amqpPublisher) ensureChannel() error {
 	p.Close()
 	conn, err := amqp.Dial(p.url)
 	if err != nil {
-		return fmt.Errorf("amqp dial: %w", err)
+		return fmt.Errorf("%w: amqp dial: %w", ErrTransport, err)
 	}
 	channel, err := conn.Channel()
 	if err != nil {
 		_ = conn.Close()
-		return fmt.Errorf("amqp channel: %w", err)
+		return fmt.Errorf("%w: amqp channel: %w", ErrTransport, err)
 	}
 	if err := channel.Confirm(false); err != nil {
 		_ = conn.Close()
-		return fmt.Errorf("amqp confirm mode: %w", err)
+		return fmt.Errorf("%w: amqp confirm mode: %w", ErrTransport, err)
 	}
 	if err := channel.ExchangeDeclare(p.exchange, "topic", true, false, false, false, nil); err != nil {
 		_ = conn.Close()
-		return fmt.Errorf("declare exchange: %w", err)
+		return fmt.Errorf("%w: declare exchange: %w", ErrTransport, err)
 	}
 	// Mandatory publishes that no queue accepts come back here; the
 	// broker sends basic.return before the confirm ack, and publishes are
@@ -99,14 +110,14 @@ func (p *amqpPublisher) Publish(ctx context.Context, m Message) error {
 			Body:         m.Body,
 		})
 	if err != nil {
-		return fmt.Errorf("publish: %w", err)
+		return fmt.Errorf("%w: publish: %w", ErrTransport, err)
 	}
 	ok, err := confirmation.WaitContext(ctx)
 	if err != nil {
-		return fmt.Errorf("confirm: %w", err)
+		return fmt.Errorf("%w: confirm: %w", ErrTransport, err)
 	}
 	if !ok {
-		return fmt.Errorf("broker nacked message %s", m.ID)
+		return fmt.Errorf("%w: %s", ErrRejected, m.ID)
 	}
 	if p.returnedID(m.ID) {
 		return ErrUnroutable

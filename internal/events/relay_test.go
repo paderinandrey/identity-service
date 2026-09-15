@@ -154,17 +154,27 @@ func (e *env) eventIDs(t *testing.T) []string {
 type fakePublisher struct {
 	mu        sync.Mutex
 	failIDs   map[string]bool
+	transport bool // when true every publish fails at the transport level
 	published []string
 }
 
 func (p *fakePublisher) Publish(_ context.Context, m events.Message) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.transport {
+		return fmt.Errorf("%w: connection refused", events.ErrTransport)
+	}
 	if p.failIDs[m.ID] {
-		return fmt.Errorf("simulated broker failure for %s", m.ID)
+		return fmt.Errorf("%w: simulated for %s", events.ErrRejected, m.ID)
 	}
 	p.published = append(p.published, m.ID)
 	return nil
+}
+
+func (p *fakePublisher) setTransport(down bool) {
+	p.mu.Lock()
+	p.transport = down
+	p.mu.Unlock()
 }
 
 func (p *fakePublisher) Close() {}
@@ -604,5 +614,69 @@ func TestGaugesReflectTheBacklogWhileBrokerIsDown(t *testing.T) {
 	})
 	if e.unpublishedCount(t) != 2 {
 		t.Error("nothing must be published while the broker is unreachable")
+	}
+}
+
+func TestBrokerOutageSpendsNoRetryBudget(t *testing.T) {
+	// Codex review, PR #6: a nine-minute outage must not quarantine valid
+	// events. Transport failures release the lease and charge nothing.
+	e := newEnvUnbound(t)
+	if _, err := e.store.CreateUser(t.Context(), "outage2@example.com", "Outage", true); err != nil {
+		t.Fatal(err)
+	}
+	id := e.eventIDs(t)[0]
+
+	pub := &fakePublisher{transport: true}
+	stop := e.runRelayWith(t, amqpURL, func(r *events.Relay) {
+		r.SetPublisher(pub)
+		r.SetRetryPolicy(fastRetry) // 3 attempts would quarantine within a second if charged
+	})
+	defer stop()
+
+	time.Sleep(1500 * time.Millisecond)
+	attempts, published, quarantined, _ := e.outboxRow(t, id)
+	if published || quarantined || attempts != 0 {
+		t.Fatalf("during outage: published=%v quarantined=%v attempts=%d; want pending with 0 attempts", published, quarantined, attempts)
+	}
+	var leased bool
+	if err := e.pool.QueryRow(t.Context(),
+		"SELECT lease_until IS NOT NULL AND lease_until > now() FROM user_events_outbox WHERE id = $1", id).Scan(&leased); err != nil {
+		t.Fatal(err)
+	}
+	if leased {
+		t.Error("a row that failed at the transport level must have its lease released")
+	}
+
+	// Broker back: the event publishes with its budget intact.
+	pub.setTransport(false)
+	waitFor(t, 10*time.Second, func() bool {
+		_, published, _, _ := e.outboxRow(t, id)
+		return published
+	})
+}
+
+func TestClaimRepairsRowsWrittenWithoutUserID(t *testing.T) {
+	// A replica of the previous release inserts rows with user_id NULL
+	// during a rolling update. The relay must still keep per-user order,
+	// so it lifts the user out of the payload before selecting.
+	e := newEnvUnbound(t)
+	user, err := e.store.CreateUser(t.Context(), "legacy@example.com", "V1", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.pool.Exec(t.Context(),
+		"UPDATE user_events_outbox SET user_id = NULL WHERE user_id = $1", user.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	pub := &fakePublisher{}
+	stop := e.runRelayWith(t, amqpURL, func(r *events.Relay) { r.SetPublisher(pub) })
+	defer stop()
+	waitFor(t, 10*time.Second, func() bool { return e.unpublishedCount(t) == 0 })
+
+	var repaired bool
+	if err := e.pool.QueryRow(t.Context(),
+		"SELECT user_id = $1 FROM user_events_outbox WHERE user_id IS NOT NULL LIMIT 1", user.ID).Scan(&repaired); err != nil || !repaired {
+		t.Errorf("user_id must be repaired from the payload before claiming: %v %v", repaired, err)
 	}
 }
