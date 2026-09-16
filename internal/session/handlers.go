@@ -48,8 +48,8 @@ func NewHandlers(manager *Manager, users UserSource, allowedOrigins []string) *H
 func OriginSet(urls []string) map[string]bool {
 	origins := make(map[string]bool, len(urls))
 	for _, o := range urls {
-		if u, err := url.Parse(o); err == nil && u.Scheme != "" && u.Host != "" {
-			origins[u.Scheme+"://"+u.Host] = true
+		if origin, ok := canonicalOrigin(o); ok {
+			origins[origin] = true
 		}
 	}
 	return origins
@@ -57,9 +57,34 @@ func OriginSet(urls []string) map[string]bool {
 
 // OriginAllowed accepts requests without an Origin header (non-browser
 // clients: the router, CLIs, tests) and browser requests whose Origin is
-// in the set.
+// in the set. Both sides are compared in canonical form.
 func OriginAllowed(allowed map[string]bool, origin string) bool {
-	return origin == "" || allowed[origin]
+	if origin == "" {
+		return true
+	}
+	canonical, ok := canonicalOrigin(origin)
+	return ok && allowed[canonical]
+}
+
+// canonicalOrigin reduces a URL or Origin value to the form a browser
+// serialises: lowercase scheme and host, no default port. A configured
+// "https://ID.Example.com:443" and the browser's "https://id.example.com"
+// must compare equal (Codex review, PR #9).
+func canonicalOrigin(raw string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	host := strings.ToLower(u.Hostname())
+	port := u.Port()
+	if (scheme == "https" && port == "443") || (scheme == "http" && port == "80") {
+		port = ""
+	}
+	if port != "" {
+		host += ":" + port
+	}
+	return scheme + "://" + host, true
 }
 
 // Register mounts session routes; the mux must be wrapped with Middleware.
