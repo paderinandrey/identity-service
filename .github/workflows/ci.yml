@@ -59,6 +59,26 @@ jobs:
           go-version-file: go.mod
       - run: go test -race ./...
 
+  schema-docs:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: identity
+          POSTGRES_PASSWORD: identity
+          POSTGRES_DB: identity_development
+        ports:
+          - "5433:5432"
+        options: >-
+          --health-cmd "pg_isready -U identity -d identity_development"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      # Same check as `mise run schema:check`: migrate, then tbls diff.
+      - run: mise run schema:check
+
   vuln:
     runs-on: ubuntu-latest
     steps:

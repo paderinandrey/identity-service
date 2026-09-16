@@ -1,0 +1,14 @@
+# Schema documentation (tbls): generated from a migrated database into
+# docs/schema/, driven by the COMMENT ON text every table and column
+# already carries. `mise run schema:docs` regenerates, `mise run
+# schema:check` fails when the committed docs are stale (CI runs it).
+dsn: ${DATABASE_URL:-postgres://identity:identity@localhost:5433/identity_development?sslmode=disable}
+docPath: docs/schema
+format:
+  adjust: true
+  sort: true
+er:
+  # Text diagrams stay diff-friendly and need no graphviz.
+  format: mermaid
+exclude:
+  - goose_db_version
