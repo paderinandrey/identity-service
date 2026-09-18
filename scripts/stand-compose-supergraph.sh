@@ -13,10 +13,31 @@ USER_EMAIL="${USER_EMAIL:-stand-qa@example.com}"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
+# Служебный пользователь для e2e-входа. CLI делает upsert по email, поэтому
+# шаг идемпотентен; без него composition зависела бы от того, кто и когда
+# завёл пользователя руками (база стенда эфемерна).
+kubectl run "create-user-$RANDOM" -n "$NS" --rm -i --restart=Never --quiet \
+  --image=identity-service:dev --image-pull-policy=Never \
+  --overrides="{\"spec\":{\"containers\":[{\"name\":\"cli\",\"image\":\"identity-service:dev\",\"imagePullPolicy\":\"Never\",\"args\":[\"create-user\",\"--email\",\"$USER_EMAIL\",\"--name\",\"SDL probe\"],\"envFrom\":[{\"configMapRef\":{\"name\":\"$RELEASE-identity-service\"}}]}]}}" >/dev/null
+
 # SDL нашего сабграфа отдаётся только аутентифицированным — берём сессию
-# через e2e-endpoint, он для этого и существует.
-kubectl run "sdl-$RANDOM" -n "$NS" --rm -i --restart=Never --quiet --image=curlimages/curl:latest -- sh -c "
-C=\$(curl -s -D - -o /dev/null -X POST http://$RELEASE-identity-service:8080/internal/e2e/login \
+# через e2e-endpoint, он для этого и существует. Endpoint живёт во
+# внутренней зоне (:8081), куда NetworkPolicy пускает только поды с меткой
+# tools; SDL — публичная зона, туда под пускают как router.
+#
+# Под долгоживущий, а не `kubectl run -i`: CNI добавляет адрес нового пода
+# в разрешённый набор политики асинхронно, и одноразовый под успевает
+# отстреляться раньше — соединение отклоняется, хотя метки верные.
+# После Ready адрес уже учтён (проверено на стенде).
+POD="sdl-probe-$RANDOM"
+kubectl delete pod -n "$NS" -l identity-stand/probe=sdl --ignore-not-found --wait=true >/dev/null 2>&1
+kubectl run "$POD" -n "$NS" --restart=Never --image=curlimages/curl:latest \
+  --labels=identity-stand/probe=sdl,identity-stand/tools=true,app.kubernetes.io/component=router \
+  --command -- sleep 300 >/dev/null
+trap 'kubectl delete pod -n "$NS" "$POD" --ignore-not-found --wait=false >/dev/null 2>&1; rm -rf "$WORK"' EXIT
+kubectl wait pod/"$POD" -n "$NS" --for=condition=Ready --timeout=60s >/dev/null
+kubectl exec -n "$NS" "$POD" -- sh -c "
+C=\$(curl -s -D - -o /dev/null -X POST http://$RELEASE-identity-service:8081/internal/e2e/login \
   -H 'Authorization: Bearer $E2E_TOKEN' -d '{\"email\":\"$USER_EMAIL\"}' \
   | grep -i '^set-cookie' | sed 's/.*__identity_session=\([^;]*\).*/\1/')
 curl -s -X POST http://$RELEASE-identity-service:8080/graphql -b \"__identity_session=\$C\" \

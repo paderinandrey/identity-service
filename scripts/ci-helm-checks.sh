@@ -77,4 +77,10 @@ out=$(helm template ci "$CHART" -f "$CHART/values-local.yaml")
 for component in postgresql redis rabbitmq keycloak echo stub-subgraph router; do
   has "component: $component" || { echo "FAIL: в стенде нет $component"; exit 1; }
 done
-echo "PASS: стенд рендерит все зависимости"
+# У echo-upstream стенда своя SecurityPolicy — она тоже обязана звать
+# ext-auth на внутренний порт: на публичном validate теперь 404, а Envoy
+# отдаёт клиенту код ответа auth-сервиса, и стенд ловил это как 404 вместо 403.
+out=$(helm template ci "$CHART" -f "$CHART/values-local.yaml" -s templates/debug-echo.yaml)
+has "port: 8081" || { echo "FAIL: ext-auth echo-политики не смотрит на внутренний порт"; exit 1; }
+has "port: 8080" && { echo "FAIL: echo-политика ссылается на публичный порт"; exit 1; }
+echo "PASS: стенд рендерит все зависимости, echo-политика на внутреннем порту"
