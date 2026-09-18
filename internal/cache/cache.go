@@ -40,12 +40,18 @@ type Cache[V any] struct {
 	mu      sync.Mutex
 	entries map[string]*list.Element
 	order   *list.List // front = most recently used
+	// Every entry gets the same TTL and a hit never extends it, so
+	// insertion order is expiry order: the back of this list is always
+	// the entry closest to expiring. Lets eviction drop dead weight in
+	// O(1) before touching a live LRU victim (Codex review, PR #8).
+	byExpiry *list.List // front = expires last
 }
 
 type entry[V any] struct {
-	key     string
-	value   V
-	expires time.Time
+	key      string
+	value    V
+	expires  time.Time
+	byExpiry *list.Element
 }
 
 // New builds a cache holding at most capacity entries for at most ttl.
@@ -60,6 +66,7 @@ func New[V any](capacity int, ttl time.Duration, load Loader[V]) *Cache[V] {
 		now:      time.Now,
 		entries:  make(map[string]*list.Element),
 		order:    list.New(),
+		byExpiry: list.New(),
 	}
 }
 
@@ -136,8 +143,7 @@ func (c *Cache[V]) peek(key string) (V, bool) {
 	}
 	e := el.Value.(*entry[V])
 	if !c.now().Before(e.expires) {
-		c.order.Remove(el)
-		delete(c.entries, key)
+		c.remove(e)
 		c.sizeChanged()
 		var zero V
 		return zero, false
@@ -149,22 +155,38 @@ func (c *Cache[V]) peek(key string) (V, bool) {
 func (c *Cache[V]) put(key string, v V) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	e := &entry[V]{key: key, value: v, expires: c.now().Add(c.ttl)}
+	now := c.now()
 	if el, ok := c.entries[key]; ok {
-		el.Value = e
+		e := el.Value.(*entry[V])
+		e.value, e.expires = v, now.Add(c.ttl)
 		c.order.MoveToFront(el)
+		c.byExpiry.MoveToFront(e.byExpiry)
 		return
 	}
+	e := &entry[V]{key: key, value: v, expires: now.Add(c.ttl)}
 	c.entries[key] = c.order.PushFront(e)
+	e.byExpiry = c.byExpiry.PushFront(e)
 	for c.order.Len() > c.capacity {
-		oldest := c.order.Back()
-		c.order.Remove(oldest)
-		delete(c.entries, oldest.Value.(*entry[V]).key)
+		// Expired entries go first — they hold no usable capacity, and a
+		// recent hit may have moved one to the LRU front; only when none
+		// is expired does a live entry lose its place.
+		if oldest := c.byExpiry.Back().Value.(*entry[V]); !now.Before(oldest.expires) {
+			c.remove(oldest)
+			continue
+		}
+		c.remove(c.order.Back().Value.(*entry[V]))
 		if c.metrics != nil {
 			c.metrics.Evicted()
 		}
 	}
 	c.sizeChanged()
+}
+
+// remove unlinks an entry from both lists and the index; callers hold mu.
+func (c *Cache[V]) remove(e *entry[V]) {
+	c.order.Remove(c.entries[e.key])
+	c.byExpiry.Remove(e.byExpiry)
+	delete(c.entries, e.key)
 }
 
 func (c *Cache[V]) sizeChanged() {
