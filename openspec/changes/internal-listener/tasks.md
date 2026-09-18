@@ -8,11 +8,11 @@
 
 ## 2. Чарт
 
-- [ ] 2.1 `values.yaml`: `config.INTERNAL_LISTEN_ADDR`, `service.internalPort`/`internalTargetPort`, блок `networkPolicy` (enabled, gatewayNamespace, monitoringNamespace, internal.extraFrom, public.extraFrom) с комментариями про router
-- [ ] 2.2 `deployment.yaml` (containerPort `internal`), `service.yaml` (два порта), `securitypolicy.yaml` и `servicemonitor.yaml` → порт `internal`; рендер `helm template` показывает ссылки на `internal`
-- [ ] 2.3 Новый `networkpolicy.yaml`: только Ingress, два правила по именам портов, namespace-селекторы по `kubernetes.io/metadata.name`, extraFrom-списки; `networkPolicy.enabled=false` не рендерит ресурс
-- [ ] 2.4 `ci-helm-checks.sh`: прод-рендер содержит NetworkPolicy с обоими портами и namespace gateway, SecurityPolicy/ServiceMonitor ссылаются на `internal`, с `networkPolicy.enabled=false` ресурса нет; `mise run chart:check` зелёный
-- [ ] 2.5 `values-local.yaml`: `INTERNAL_LISTEN_ADDR`, `public.extraFrom` = router, `internal.extraFrom` = поды с меткой `identity-stand/tools: "true"`
+- [x] 2.1 `values.yaml`: `config.INTERNAL_LISTEN_ADDR`, `service.internalPort`/`internalTargetPort`, блок `networkPolicy` (enabled, gatewayNamespace, monitoringNamespace, internal.extraFrom, public.extraFrom) с комментариями про router
+- [x] 2.2 `deployment.yaml` (containerPort `internal`), `service.yaml` (два порта), `securitypolicy.yaml` и `servicemonitor.yaml` → порт `internal`; рендер `helm template` показывает ссылки на `internal`
+- [x] 2.3 Новый `networkpolicy.yaml`: только Ingress, два правила по именам портов, namespace-селекторы по `kubernetes.io/metadata.name`, extraFrom-списки; `networkPolicy.enabled=false` не рендерит ресурс
+- [x] 2.4 `ci-helm-checks.sh`: прод-рендер содержит NetworkPolicy с обоими портами и namespace gateway, SecurityPolicy/ServiceMonitor ссылаются на `internal`, с `networkPolicy.enabled=false` ресурса нет; `mise run chart:check` зелёный
+- [x] 2.5 `values-local.yaml`: `INTERNAL_LISTEN_ADDR`, `public.extraFrom` = router, `internal.extraFrom` = поды с меткой `identity-stand/tools: "true"`
 
 ## 3. Стенд
 

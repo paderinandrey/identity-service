@@ -11,5 +11,9 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+    - port: {{ .Values.service.internalPort }}
+      targetPort: internal
+      protocol: TCP
+      name: internal
   selector:
     {{- include "identity-service.selectorLabels" . | nindent 4 }}
