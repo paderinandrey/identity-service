@@ -2,9 +2,9 @@
 
 ## 1. Конфигурация и HTTP-сервер
 
-- [ ] 1.1 `config`: `INTERNAL_LISTEN_ADDR` (default `:8081`), равенство с `LISTEN_ADDR` — ошибка загрузки с понятным сообщением; тесты на default, переопределение и совпадение адресов
-- [ ] 1.2 `httpserver`: `WithInternal(addr, register)` — второй `http.Server` с собственным mux и тем же wrapper; `Run` поднимает оба, ошибка любого прерывает запуск, shutdown обоих в один таймаут; тесты: health только на публичном, внутренний маршрут → 404 на публичном и 200 на внутреннем, публичный маршрут → 404 на внутреннем, занятый внутренний адрес → ошибка `Run`, graceful shutdown обоих
-- [ ] 1.3 `main.go`: validate, e2e-login и metrics регистрируются на внутреннем mux (validate и e2e — за session-middleware), `/internal/` снят с публичного mux; лог старта — оба адреса; `go build`, `go test ./...` зелёные
+- [x] 1.1 `config`: `INTERNAL_LISTEN_ADDR` (default `:8081`), равенство с `LISTEN_ADDR` — ошибка загрузки с понятным сообщением; тесты на default, переопределение и совпадение адресов
+- [x] 1.2 `httpserver`: `WithInternal(addr, register)` — второй `http.Server` с собственным mux и тем же wrapper; `Run` поднимает оба, ошибка любого прерывает запуск, shutdown обоих в один таймаут; тесты: health только на публичном, внутренний маршрут → 404 на публичном и 200 на внутреннем, публичный маршрут → 404 на внутреннем, занятый внутренний адрес → ошибка `Run`, graceful shutdown обоих
+- [x] 1.3 `main.go`: validate, e2e-login и metrics регистрируются на внутреннем mux (validate и e2e — за session-middleware), `/internal/` снят с публичного mux; лог старта — оба адреса; `go build`, `go test ./...` зелёные
 
 ## 2. Чарт
 
