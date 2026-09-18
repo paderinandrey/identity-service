@@ -188,3 +188,62 @@ func TestShutdownClosesBothListenersConcurrently(t *testing.T) {
 		t.Errorf("Run() = %v, want nil", err)
 	}
 }
+
+// A request that outlives the shutdown timeout is force-closed, and Run
+// still returns nil: the stop signal was honoured, so the process must
+// exit successfully rather than report the expected timeout as a
+// failure (Codex review, PR #11).
+func TestShutdownTimeoutIsNotFatal(t *testing.T) {
+	publicAddr := freeAddr(t)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := New(publicAddr, logger, 200*time.Millisecond,
+		WithRoutes(func(mux *http.ServeMux) {
+			mux.HandleFunc("GET /stuck", func(_ http.ResponseWriter, _ *http.Request) {
+				close(entered)
+				<-release
+			})
+		}),
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- srv.Run(ctx) }()
+	waitFor(t, "http://"+publicAddr+"/healthz", http.StatusOK)
+	go func() {
+		resp, err := noKeepAliveClient.Get("http://" + publicAddr + "/stuck")
+		if err == nil {
+			_ = resp.Body.Close()
+		}
+	}()
+	<-entered
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Run() = %v, want nil after a forced close", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run() did not return after the shutdown timeout")
+	}
+	close(release)
+}
+
+// Readiness is declared only once every zone is bound: a bind failure
+// returns before ready ever flips, so /readyz cannot report 200 for a
+// process whose ext-auth zone does not exist (Codex review, PR #11).
+func TestReadinessWaitsForEveryBind(t *testing.T) {
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = busy.Close() }()
+	srv := newZonedServer(freeAddr(t), busy.Addr().String())
+	if err := srv.Run(context.Background()); err == nil {
+		t.Fatal("Run() = nil, want bind error")
+	}
+	if srv.ready.Load() {
+		t.Error("ready must never be set when a zone failed to bind")
+	}
+}

@@ -11,7 +11,9 @@ package httpserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -160,15 +162,30 @@ func (s *Server) servers() []*http.Server {
 // Run serves both zones until ctx is cancelled, then shuts down
 // gracefully: readiness drops first so load balancers stop sending
 // traffic, then in-flight requests of every zone get up to
-// shutdownTimeout to finish. A zone that fails to serve (a busy address,
-// say) fails Run as a whole: the other zone is shut down too, so the
-// process never runs half-reachable while reporting itself healthy.
+// shutdownTimeout to finish. Both addresses are bound before readiness
+// is declared, so /readyz never reports 200 while a zone is still
+// unbound; a zone that cannot bind fails Run as a whole and no listener
+// stays up alone. A request that outlives the shutdown timeout is
+// force-closed and logged, not turned into a failed exit: the signal
+// was honoured (Codex review, PR #11).
 func (s *Server) Run(ctx context.Context) error {
 	servers := s.servers()
-	errCh := make(chan error, len(servers))
+	listeners := make([]net.Listener, 0, len(servers))
 	for _, srv := range servers {
+		ln, err := net.Listen("tcp", srv.Addr)
+		if err != nil {
+			for _, bound := range listeners {
+				_ = bound.Close()
+			}
+			return fmt.Errorf("listen %s: %w", srv.Addr, err)
+		}
+		listeners = append(listeners, ln)
+	}
+
+	errCh := make(chan error, len(servers))
+	for i, srv := range servers {
 		go func() {
-			err := srv.ListenAndServe()
+			err := srv.Serve(listeners[i])
 			if err != nil && !errors.Is(err, http.ErrServerClosed) {
 				errCh <- err
 				return
@@ -186,8 +203,8 @@ func (s *Server) Run(ctx context.Context) error {
 	select {
 	case runErr = <-errCh:
 		if runErr == nil {
-			// ListenAndServe returned ErrServerClosed without our shutdown:
-			// nothing to wait for, but treat it like a cancellation.
+			// Serve returned ErrServerClosed without our shutdown: nothing
+			// to wait for, but treat it like a cancellation.
 			runErr = errors.New("http server stopped unexpectedly")
 		}
 	case <-ctx.Done():
@@ -202,7 +219,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// Both zones shut down at once: each Shutdown closes its listener
 	// immediately and then drains, so neither zone keeps admitting
 	// requests while the other finishes its in-flight ones.
-	errs := make([]error, len(servers))
+	closeErrs := make([]error, len(servers))
 	var wg sync.WaitGroup
 	for i, srv := range servers {
 		wg.Add(1)
@@ -210,8 +227,7 @@ func (s *Server) Run(ctx context.Context) error {
 			defer wg.Done()
 			if err := srv.Shutdown(shutdownCtx); err != nil {
 				s.logger.Error("graceful shutdown exceeded timeout, closing connections", "addr", srv.Addr, "error", err)
-				_ = srv.Close()
-				errs[i] = err
+				closeErrs[i] = srv.Close()
 			}
 		}()
 	}
@@ -219,5 +235,5 @@ func (s *Server) Run(ctx context.Context) error {
 	if runErr != nil {
 		return runErr
 	}
-	return errors.Join(errs...)
+	return errors.Join(closeErrs...)
 }
