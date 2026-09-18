@@ -112,7 +112,7 @@ in.
 | `FRONTEND_BASE_URL` | `http://localhost:8080` | Where the browser lands after login |
 | `SAML_IDP_METADATA_URL` | — (SSO disabled) | Okta IdP metadata URL |
 | `SAML_ALLOW_IDP_INITIATED` | `false` | Accept SAML responses without `InResponseTo` (IdP-initiated sign-in). An open product decision; off until made |
-| `RELAY_STATE_SECRET` | insecure dev value | HMAC secret for the RelayState token | Outside development: at least 32 characters and not the development default.
+| `RELAY_STATE_SECRET` | insecure dev value | HMAC secret for the RelayState token. Outside development: at least 32 characters and not the development default |
 | `SESSION_COOKIE_NAME` | `__identity_session` | Session cookie name |
 | `SESSION_IDLE_TIMEOUT` | `24h` | Session idle expiry (slides with activity) |
 | `SESSION_LIFETIME` | `720h` | Absolute session lifetime |
