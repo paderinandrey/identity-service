@@ -48,16 +48,17 @@ func NewHandlers(manager *Manager, users UserSource, allowedOrigins []string) *H
 	return &Handlers{manager: manager, users: users, allowedOrigins: origins}
 }
 
-// Register mounts session routes; the mux must be wrapped with Middleware.
-// Register mounts the browser-facing routes on the public zone.
+// Register mounts the browser-facing routes on the public zone; the mux
+// must be wrapped with Middleware.
 func (h *Handlers) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/me", h.handleMe)
 	mux.HandleFunc("POST /auth/logout", h.handleLogout)
 }
 
-// RegisterInternal mounts the ext-auth validation route. It belongs to
-// the internal zone only: mounting it on the public listener would make
-// the trusted-context contract depend on routing alone.
+// RegisterInternal mounts the ext-auth validation route; the mux must be
+// wrapped with Middleware. It belongs to the internal zone only: mounting
+// it on the public listener would make the trusted-context contract
+// depend on routing alone.
 func (h *Handlers) RegisterInternal(mux *http.ServeMux) {
 	// The ext-auth contract shapes this route: Envoy mirrors the method of
 	// the original request (POST /graphql arrives here as POST) and treats

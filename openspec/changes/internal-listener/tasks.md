@@ -22,5 +22,5 @@
 
 ## 4. Документация и приёмка
 
-- [ ] 4.1 README: таблица переменных (`INTERNAL_LISTEN_ADDR`), раздел про зоны и порты, NetworkPolicy и обязанность добавить router в `public.extraFrom`, правило двухфазного раската при смене портов; docker-run пример с `-p 8081:8081`
-- [ ] 4.2 `gofmt`, `mise run lint`, `go test ./...`, `mise run chart:check`; итоговый diff просмотрен, CI зелёный
+- [x] 4.1 README: таблица переменных (`INTERNAL_LISTEN_ADDR`), раздел про зоны и порты, NetworkPolicy и обязанность добавить router в `public.extraFrom`, правило двухфазного раската при смене портов; docker-run пример с `-p 8081:8081`
+- [x] 4.2 `gofmt`, `mise run lint`, `go test ./...`, `mise run chart:check`; итоговый diff просмотрен, CI зелёный
