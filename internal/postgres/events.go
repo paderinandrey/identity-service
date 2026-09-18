@@ -18,9 +18,9 @@ func recordUserEvent(ctx context.Context, tx pgx.Tx, eventType string, user *ide
 		return err
 	}
 	_, err = tx.Exec(ctx,
-		`INSERT INTO user_events_outbox (id, event_type, payload, user_id)
-		 SELECT uid, $1, jsonb_set($2::jsonb, '{id}', to_jsonb(uid::text)), $3
-		 FROM (SELECT gen_random_uuid() AS uid) t`, eventType, body, user.ID)
+		`INSERT INTO user_events_outbox (id, event_type, payload, user_id, user_version)
+		 SELECT uid, $1, jsonb_set($2::jsonb, '{id}', to_jsonb(uid::text)), $3, $4
+		 FROM (SELECT gen_random_uuid() AS uid) t`, eventType, body, user.ID, user.Version)
 	return err
 }
 

@@ -162,16 +162,25 @@ type outboxRow struct {
 // user (the head of that user's line), not leased by anyone else and not
 // backing off. One short transaction; the lease is what other replicas
 // see, so nothing is held open while the broker is talked to.
+//
+// The head of a user's line is the lowest user_version, not the oldest
+// created_at: created_at is the transaction start time, so two events
+// written in one transaction share it and a transaction that started
+// earlier but took the user row lock later carries the higher version
+// with the lower timestamp (Codex review, PR #6).
 func (r *Relay) claim(ctx context.Context) ([]outboxRow, error) {
 	// Rows written by a replica of the previous release carry the user
-	// only in the payload (user_id NULL). NULL never equals NULL, so the
-	// head-of-line predicate would let two relays hold events of one
-	// user. Repair pending rows before selecting; bounded by the pending
-	// set, a no-op once the old writers are gone.
+	// only in the payload (user_id NULL). Repair pending rows so the
+	// per-user index applies to them; bounded by the pending set, a
+	// no-op once the old writers are gone. A row such a replica commits
+	// between this statement and the claim is still ordered correctly:
+	// the predicate below falls back to the payload for NULL columns.
 	if _, err := r.pool.Exec(ctx,
 		`UPDATE user_events_outbox
-		 SET user_id = (payload -> 'user' ->> 'id')::uuid
-		 WHERE user_id IS NULL AND published_at IS NULL AND payload -> 'user' ->> 'id' IS NOT NULL`); err != nil {
+		 SET user_id = (payload -> 'user' ->> 'id')::uuid,
+		     user_version = (payload -> 'user' ->> 'version')::bigint
+		 WHERE (user_id IS NULL OR user_version IS NULL) AND published_at IS NULL
+		   AND payload -> 'user' ->> 'id' IS NOT NULL`); err != nil {
 		return nil, fmt.Errorf("repair outbox user ids: %w", err)
 	}
 	rows, err := r.pool.Query(ctx,
@@ -181,9 +190,11 @@ func (r *Relay) claim(ctx context.Context) ([]outboxRow, error) {
 		     AND (o.lease_until IS NULL OR o.lease_until < now())
 		     AND NOT EXISTS (
 		       SELECT 1 FROM user_events_outbox p
-		       WHERE p.user_id = o.user_id
+		       WHERE COALESCE(p.user_id, (p.payload -> 'user' ->> 'id')::uuid)
+		             = COALESCE(o.user_id, (o.payload -> 'user' ->> 'id')::uuid)
 		         AND p.published_at IS NULL AND p.quarantined_at IS NULL
-		         AND (p.created_at, p.id) < (o.created_at, o.id))
+		         AND (COALESCE(p.user_version, (p.payload -> 'user' ->> 'version')::bigint), p.created_at, p.id)
+		           < (COALESCE(o.user_version, (o.payload -> 'user' ->> 'version')::bigint), o.created_at, o.id))
 		   ORDER BY o.created_at, o.id
 		   LIMIT $1
 		   FOR UPDATE SKIP LOCKED)
@@ -362,13 +373,16 @@ func (r *Relay) observe(ctx context.Context) {
 	if r.metrics == nil {
 		return
 	}
+	// Three scalar subqueries, each answered by a partial index over its
+	// own set, so retained published history is never scanned for a
+	// gauge refresh (Codex review, PR #6).
 	var pending, quarantined int
 	var oldest float64
 	err := r.pool.QueryRow(ctx,
-		`SELECT count(*) FILTER (WHERE published_at IS NULL AND quarantined_at IS NULL),
-		        count(*) FILTER (WHERE quarantined_at IS NOT NULL),
-		        COALESCE(EXTRACT(EPOCH FROM now() - min(created_at) FILTER (WHERE published_at IS NULL AND quarantined_at IS NULL)), 0)
-		 FROM user_events_outbox`).Scan(&pending, &quarantined, &oldest)
+		`SELECT (SELECT count(*) FROM user_events_outbox WHERE published_at IS NULL AND quarantined_at IS NULL),
+		        (SELECT count(*) FROM user_events_outbox WHERE quarantined_at IS NOT NULL),
+		        COALESCE((SELECT EXTRACT(EPOCH FROM now() - min(created_at)) FROM user_events_outbox
+		                  WHERE published_at IS NULL AND quarantined_at IS NULL), 0)`).Scan(&pending, &quarantined, &oldest)
 	if err != nil {
 		r.logger.Warn("outbox gauges unavailable", "error", err)
 		return

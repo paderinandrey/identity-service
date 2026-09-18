@@ -680,3 +680,56 @@ func TestClaimRepairsRowsWrittenWithoutUserID(t *testing.T) {
 		t.Errorf("user_id must be repaired from the payload before claiming: %v %v", repaired, err)
 	}
 }
+
+// created_at is the transaction start time: two events of one
+// transaction share it, and a transaction that started earlier but took
+// the user row lock later carries the higher version. The head of a
+// user's line is therefore the lowest version, whatever the timestamps
+// and ids say (Codex review, PR #6).
+func TestPerUserOrderFollowsVersionNotTimestamp(t *testing.T) {
+	e := newEnvUnbound(t)
+	user, err := e.store.CreateUser(t.Context(), "versioned@example.com", "V1", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	insert := func(id string, version int64, createdAt time.Time) {
+		t.Helper()
+		u := *user
+		u.Version = version
+		body, _ := json.Marshal(events.NewPayload(events.TypeUpdated, &u))
+		if _, err := e.pool.Exec(t.Context(),
+			`INSERT INTO user_events_outbox (id, event_type, payload, user_id, user_version, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6)`, id, events.TypeUpdated, body, user.ID, version, createdAt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Same transaction: same created_at, the lower id carries the higher version.
+	insert("aaaaaaaa-0000-4000-8000-000000000003", 3, base.Add(time.Second))
+	insert("bbbbbbbb-0000-4000-8000-000000000002", 2, base.Add(time.Second))
+	// Different transactions: the later version has the earlier timestamp.
+	insert("cccccccc-0000-4000-8000-000000000005", 5, base.Add(2*time.Second))
+	insert("dddddddd-0000-4000-8000-000000000004", 4, base.Add(3*time.Second))
+
+	pub := &fakePublisher{}
+	stop := e.runRelayWith(t, amqpURL, func(r *events.Relay) { r.SetPublisher(pub) })
+	defer stop()
+	waitFor(t, 10*time.Second, func() bool { return e.unpublishedCount(t) == 0 })
+
+	var versions []int64
+	for _, id := range pub.got() {
+		var v int64
+		if err := e.pool.QueryRow(t.Context(), "SELECT user_version FROM user_events_outbox WHERE id = $1", id).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		versions = append(versions, v)
+	}
+	for i := 1; i < len(versions); i++ {
+		if versions[i] <= versions[i-1] {
+			t.Fatalf("published versions %v: not increasing at %d", versions, i)
+		}
+	}
+	if len(versions) != 5 {
+		t.Errorf("published %d events, want 5", len(versions))
+	}
+}

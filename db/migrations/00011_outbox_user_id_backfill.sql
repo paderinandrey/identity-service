@@ -8,11 +8,14 @@
 -- pre-upgrade transaction would hold locks and generate WAL for no
 -- benefit (Codex review, PR #6).
 UPDATE user_events_outbox
-   SET user_id = (payload -> 'user' ->> 'id')::uuid
+   SET user_id      = (payload -> 'user' ->> 'id')::uuid,
+       user_version = (payload -> 'user' ->> 'version')::bigint
  WHERE user_id IS NULL
    AND published_at IS NULL
    AND payload -> 'user' ->> 'id' IS NOT NULL;
 
 -- +goose Down
--- Restores the pre-backfill state exactly: the value lives in the payload.
-UPDATE user_events_outbox SET user_id = NULL;
+-- Deliberately a no-op: the values still live in the payload, and 00009's
+-- Down drops both columns anyway. Rewriting every retained row here would
+-- lock and WAL the whole history for nothing (Codex review, PR #6).
+SELECT 1;

@@ -11,9 +11,13 @@ DROP INDEX CONCURRENTLY IF EXISTS user_events_outbox_pending_idx;
 CREATE INDEX CONCURRENTLY user_events_outbox_pending_idx
     ON user_events_outbox (created_at, id) WHERE published_at IS NULL AND quarantined_at IS NULL;
 DROP INDEX CONCURRENTLY IF EXISTS user_events_outbox_user_pending_idx;
--- Head-of-line check per user.
+-- Head-of-line check per user, in version order.
 CREATE INDEX CONCURRENTLY user_events_outbox_user_pending_idx
-    ON user_events_outbox (user_id, created_at, id) WHERE published_at IS NULL AND quarantined_at IS NULL;
+    ON user_events_outbox (user_id, user_version, created_at, id) WHERE published_at IS NULL AND quarantined_at IS NULL;
+DROP INDEX CONCURRENTLY IF EXISTS user_events_outbox_quarantined_idx;
+-- Quarantine gauge without touching published history.
+CREATE INDEX CONCURRENTLY user_events_outbox_quarantined_idx
+    ON user_events_outbox (quarantined_at) WHERE quarantined_at IS NOT NULL;
 DROP INDEX CONCURRENTLY IF EXISTS user_events_outbox_published_idx;
 -- Retention of published rows.
 CREATE INDEX CONCURRENTLY user_events_outbox_published_idx
@@ -22,6 +26,7 @@ CREATE INDEX CONCURRENTLY user_events_outbox_published_idx
 DROP INDEX CONCURRENTLY IF EXISTS user_events_outbox_unpublished_idx;
 
 -- +goose Down
+DROP INDEX CONCURRENTLY IF EXISTS user_events_outbox_quarantined_idx;
 DROP INDEX CONCURRENTLY IF EXISTS user_events_outbox_published_idx;
 DROP INDEX CONCURRENTLY IF EXISTS user_events_outbox_user_pending_idx;
 DROP INDEX CONCURRENTLY IF EXISTS user_events_outbox_pending_idx;
