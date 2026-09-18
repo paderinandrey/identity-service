@@ -96,7 +96,9 @@ func (p *amqpPublisher) Publish(ctx context.Context, m Message) error {
 	if err := p.ensureChannel(); err != nil {
 		return err
 	}
-	p.drainReturns()
+	if err := p.drainReturns(); err != nil {
+		return err
+	}
 	confirmation, err := p.channel.PublishWithDeferredConfirmWithContext(ctx,
 		p.exchange, m.RoutingKey,
 		true,  // mandatory: an unroutable message must come back, not vanish
@@ -119,33 +121,54 @@ func (p *amqpPublisher) Publish(ctx context.Context, m Message) error {
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrRejected, m.ID)
 	}
-	if p.returnedID(m.ID) {
+	returned, err := p.returnedID(m.ID)
+	if err != nil {
+		return err
+	}
+	if returned {
 		return ErrUnroutable
 	}
 	return nil
 }
 
+// errReturnsClosed is what both readers report once the broker has
+// closed the channel: NotifyReturn closes the subscriber channel then,
+// and a receive on it is permanently ready with zero values — without
+// the ok check both loops would spin forever inside the only relay
+// goroutine (Codex review, PR #6). Dropping the channel makes the next
+// Publish reconnect.
+func (p *amqpPublisher) errReturnsClosed() error {
+	p.Close()
+	return fmt.Errorf("%w: amqp channel closed while reading returns", ErrTransport)
+}
+
 // drainReturns discards returns left over from earlier messages.
-func (p *amqpPublisher) drainReturns() {
+func (p *amqpPublisher) drainReturns() error {
 	for {
 		select {
-		case <-p.returns:
+		case _, ok := <-p.returns:
+			if !ok {
+				return p.errReturnsClosed()
+			}
 		default:
-			return
+			return nil
 		}
 	}
 }
 
 // returnedID reports whether the broker returned the given message.
-func (p *amqpPublisher) returnedID(id string) bool {
+func (p *amqpPublisher) returnedID(id string) (bool, error) {
 	for {
 		select {
-		case ret := <-p.returns:
+		case ret, ok := <-p.returns:
+			if !ok {
+				return false, p.errReturnsClosed()
+			}
 			if ret.MessageId == id {
-				return true
+				return true, nil
 			}
 		default:
-			return false
+			return false, nil
 		}
 	}
 }
