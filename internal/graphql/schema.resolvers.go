@@ -41,8 +41,11 @@ func (r *queryResolver) Users(ctx context.Context, search *string, includeInacti
 	if first < 1 || first > maxUsersPage {
 		return nil, errWithCode("first must be between 1 and 200", "BAD_USER_INPUT")
 	}
+	// Only an omitted/null cursor means the first page: an empty string
+	// was never issued by the service, so it is invalid like any other
+	// unknown value (Codex review, PR #7).
 	var afterKey *identity.PageKey
-	if after != nil && *after != "" {
+	if after != nil {
 		key, err := decodeCursor(*after)
 		if err != nil {
 			return nil, errWithCode(err.Error(), "BAD_USER_INPUT")

@@ -411,6 +411,7 @@ func TestUsersRejectsBadPageArguments(t *testing.T) {
 		`{ users(first: 0) { nodes { id } } }`,
 		`{ users(first: 201) { nodes { id } } }`,
 		`{ users(after: "not-a-cursor") { nodes { id } } }`,
+		`{ users(after: "") { nodes { id } } }`,
 	} {
 		resp := c.query(t, q, nil)
 		if resp.errorCode() != "BAD_USER_INPUT" || resp.Data["users"] != nil {
@@ -701,5 +702,27 @@ func TestEntityBatchIsCapped(t *testing.T) {
 	inline.WriteString(`]) { ... on User { id } } }`)
 	if resp := c.query(t, inline.String(), nil); resp.errorCode() != "BAD_USER_INPUT" {
 		t.Errorf("inline batch of 201: code=%q, want BAD_USER_INPUT", resp.errorCode())
+	}
+
+	// The cap is per operation, not per field: aliases and fragments
+	// must not multiply it (Codex review, PR #7).
+	for name, q := range map[string]string{
+		"fragment spread": `query($r: [_Any!]!) { ...E } fragment E on Query { _entities(representations: $r) { ... on User { id } } }`,
+		"inline fragment": `query($r: [_Any!]!) { ... on Query { _entities(representations: $r) { ... on User { id } } } }`,
+		"aliases summed":  `query($r: [_Any!]!) { a: _entities(representations: $r) { ... on User { id } } b: _entities(representations: $r) { ... on User { id } } }`,
+	} {
+		size := 201
+		if name == "aliases summed" {
+			size = 150 // 150 + 150 > 200 while each alias alone is within the cap
+		}
+		resp := c.query(t, q, map[string]any{"r": reps(size)})
+		if resp.errorCode() != "BAD_USER_INPUT" || resp.Data["_entities"] != nil || resp.Data["a"] != nil {
+			t.Errorf("%s: code=%q data=%v; want BAD_USER_INPUT and no data", name, resp.errorCode(), resp.Data)
+		}
+	}
+	// Two aliases that together stay within the cap still resolve.
+	both := c.query(t, `query($r: [_Any!]!) { a: _entities(representations: $r) { ... on User { id } } b: _entities(representations: $r) { ... on User { id } } }`, map[string]any{"r": reps(100)})
+	if both.errorCode() != "" {
+		t.Errorf("two aliases of 100 rejected: %v", both.Errors)
 	}
 }

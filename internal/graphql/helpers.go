@@ -148,28 +148,53 @@ func toModelUser(u *identity.User) *model.User {
 
 // --- federation batch cap ---
 
-// limitEntityBatches refuses an operation whose _entities field carries
-// more representations than maxEntityBatch, before any resolver runs.
-// Representations arrive as a variable (routers) or as a literal list.
+// limitEntityBatches refuses an operation whose _entities fields carry,
+// in total, more representations than maxEntityBatch, before any
+// resolver runs. Representations arrive as a variable (routers) or as a
+// literal list. The count is summed over the whole operation — aliases
+// and fragments included — because each _entities field resolves its
+// own batch, so per-field checks would let N aliases of a 200-item
+// variable through (Codex review, PR #7).
 func limitEntityBatches(ctx context.Context, next graphql.OperationHandler) graphql.ResponseHandler {
 	rc := graphql.GetOperationContext(ctx)
 	if rc == nil || rc.Operation == nil {
 		return next(ctx)
 	}
-	for _, sel := range rc.Operation.SelectionSet {
-		field, ok := sel.(*ast.Field)
-		if !ok || field.Name != "_entities" {
-			continue
-		}
-		n := representationCount(field, rc.Variables)
-		if n > maxEntityBatch {
-			err := errWithCode(fmt.Sprintf("_entities batch of %d exceeds the limit of %d", n, maxEntityBatch), "BAD_USER_INPUT")
-			return func(context.Context) *graphql.Response {
-				return &graphql.Response{Errors: []*gqlerror.Error{err}}
-			}
+	n := entityRepresentations(rc.Operation.SelectionSet, rc.Doc, rc.Variables, map[string]bool{})
+	if n > maxEntityBatch {
+		err := errWithCode(fmt.Sprintf("_entities batch of %d exceeds the limit of %d", n, maxEntityBatch), "BAD_USER_INPUT")
+		return func(context.Context) *graphql.Response {
+			return &graphql.Response{Errors: []*gqlerror.Error{err}}
 		}
 	}
 	return next(ctx)
+}
+
+// entityRepresentations sums the representations of every _entities
+// field reachable from set: direct, aliased, behind inline fragments or
+// fragment spreads. seen guards against fragment cycles (the validator
+// rejects them, but this runs on the parsed document either way).
+func entityRepresentations(set ast.SelectionSet, doc *ast.QueryDocument, vars map[string]any, seen map[string]bool) int {
+	n := 0
+	for _, sel := range set {
+		switch s := sel.(type) {
+		case *ast.Field:
+			if s.Name == "_entities" {
+				n += representationCount(s, vars)
+			}
+		case *ast.InlineFragment:
+			n += entityRepresentations(s.SelectionSet, doc, vars, seen)
+		case *ast.FragmentSpread:
+			if seen[s.Name] || doc == nil {
+				continue
+			}
+			seen[s.Name] = true
+			if def := doc.Fragments.ForName(s.Name); def != nil {
+				n += entityRepresentations(def.SelectionSet, doc, vars, seen)
+			}
+		}
+	}
+	return n
 }
 
 func representationCount(field *ast.Field, vars map[string]any) int {
