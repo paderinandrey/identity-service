@@ -13,6 +13,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -198,20 +199,25 @@ func (s *Server) Run(ctx context.Context) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), s.shutdownTimeout)
 	defer cancel()
 
-	var shutdownErr error
-	for _, srv := range servers {
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			s.logger.Error("graceful shutdown exceeded timeout, closing connections", "addr", srv.Addr, "error", err)
-			if closeErr := srv.Close(); closeErr != nil && shutdownErr == nil {
-				shutdownErr = closeErr
+	// Both zones shut down at once: each Shutdown closes its listener
+	// immediately and then drains, so neither zone keeps admitting
+	// requests while the other finishes its in-flight ones.
+	errs := make([]error, len(servers))
+	var wg sync.WaitGroup
+	for i, srv := range servers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := srv.Shutdown(shutdownCtx); err != nil {
+				s.logger.Error("graceful shutdown exceeded timeout, closing connections", "addr", srv.Addr, "error", err)
+				_ = srv.Close()
+				errs[i] = err
 			}
-			if shutdownErr == nil {
-				shutdownErr = err
-			}
-		}
+		}()
 	}
+	wg.Wait()
 	if runErr != nil {
 		return runErr
 	}
-	return shutdownErr
+	return errors.Join(errs...)
 }

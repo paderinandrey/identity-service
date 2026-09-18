@@ -133,3 +133,58 @@ func TestRunFailsWhenInternalAddrBusy(t *testing.T) {
 	}
 	t.Error("public listener must be closed when the internal zone fails to start")
 }
+
+// Shutdown must close both listeners at once: while a slow public
+// request drains, the internal listener must already refuse new
+// connections instead of admitting ext-auth calls into a shrinking
+// deadline (Codex review, PR #11).
+func TestShutdownClosesBothListenersConcurrently(t *testing.T) {
+	publicAddr, internalAddr := freeAddr(t), freeAddr(t)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := New(publicAddr, logger, 5*time.Second,
+		WithRoutes(func(mux *http.ServeMux) {
+			mux.HandleFunc("GET /slow", func(w http.ResponseWriter, _ *http.Request) {
+				close(entered)
+				<-release
+				w.WriteHeader(http.StatusOK)
+			})
+		}),
+		WithInternal(internalAddr, func(mux *http.ServeMux) { mux.HandleFunc("/internal/session/validate", ok) }),
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- srv.Run(ctx) }()
+	waitFor(t, "http://"+internalAddr+"/internal/session/validate", http.StatusOK)
+
+	slowDone := make(chan error, 1)
+	go func() {
+		resp, err := noKeepAliveClient.Get("http://" + publicAddr + "/slow")
+		if err == nil {
+			_ = resp.Body.Close()
+		}
+		slowDone <- err
+	}()
+	<-entered
+	cancel()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := noKeepAliveClient.Get("http://" + internalAddr + "/internal/session/validate"); err != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("internal listener still accepts connections while the public zone drains")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	close(release)
+	if err := <-slowDone; err != nil {
+		t.Errorf("in-flight public request must complete: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Errorf("Run() = %v, want nil", err)
+	}
+}
