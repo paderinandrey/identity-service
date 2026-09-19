@@ -8,8 +8,8 @@
 
 ## 2. Референсный консьюмер
 
-- [ ] 2.1 `dev/stub-consumer` (модуль, Dockerfile по образцу stub-subgraph): `apply.go` — чистая `Apply(state, event)` с исходами applied/duplicate/stale/rejected; юнит-тесты на дубликат по id, устаревшую версию, параллельные N/N+1 в обоих порядках, невалидный JSON, неизвестный `type` как снимок
-- [ ] 2.2 `consume.go`: своя durable-очередь `stub-consumer.users`, binding `user.#` к `identity.events`, prefetch, ack для applied/duplicate/stale, nack без requeue для rejected, переподключение с backoff; `http.go`: `/healthz`, `/projection`, `/projection/{id}`, `/stats`; `go vet` и `go test` модуля зелёные
+- [x] 2.1 `dev/stub-consumer` (модуль, Dockerfile по образцу stub-subgraph): `apply.go` — чистая `Apply(state, event)` с исходами applied/duplicate/stale/rejected; юнит-тесты на дубликат по id, устаревшую версию, параллельные N/N+1 в обоих порядках, невалидный JSON, неизвестный `type` как снимок
+- [x] 2.2 `consume.go`: своя durable-очередь `stub-consumer.users`, binding `user.#` к `identity.events`, prefetch, ack для applied/duplicate/stale, nack без requeue для rejected, переподключение с backoff; `http.go`: `/healthz`, `/projection`, `/projection/{id}`, `/stats`; `go vet` и `go test` модуля зелёные
 - [ ] 2.3 CI: джоб или шаг, гоняющий `go test` в `dev/stub-consumer` (как для основного модуля), чтобы референс не гнил молча
 
 ## 3. Стенд
