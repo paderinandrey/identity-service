@@ -15,6 +15,7 @@ import (
 	"github.com/paderinandrey/identity-service/internal/access"
 	"github.com/paderinandrey/identity-service/internal/graphql/model"
 	"github.com/paderinandrey/identity-service/internal/identity"
+	"github.com/paderinandrey/identity-service/internal/session"
 )
 
 // --- request-scoped prefetch of role assignments ---
@@ -211,4 +212,27 @@ func representationCount(field *ast.Field, vars map[string]any) int {
 		return len(arg.Value.Children)
 	}
 	return 0
+}
+
+// --- CSRF: trusted Origin for cookie-authenticated mutations ---
+
+// requireTrustedOrigin refuses a mutation whose Origin header is present
+// and not in the allowed set, before any resolver runs — the same rule
+// logout applies. Reads change nothing and are left alone. The router in
+// front of this subgraph must propagate the browser's Origin, or every
+// request looks like a non-browser client.
+func requireTrustedOrigin(allowed map[string]bool) graphql.OperationMiddleware {
+	return func(ctx context.Context, next graphql.OperationHandler) graphql.ResponseHandler {
+		rc := graphql.GetOperationContext(ctx)
+		if rc == nil || rc.Operation == nil || rc.Operation.Operation != ast.Mutation {
+			return next(ctx)
+		}
+		if session.OriginAllowed(allowed, rc.Headers.Get("Origin")) {
+			return next(ctx)
+		}
+		err := errWithCode("forbidden origin", "FORBIDDEN")
+		return func(context.Context) *graphql.Response {
+			return &graphql.Response{Errors: []*gqlerror.Error{err}}
+		}
+	}
 }

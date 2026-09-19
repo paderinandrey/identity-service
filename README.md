@@ -103,7 +103,7 @@ in.
 | Variable | Default (development) | Description |
 | --- | --- | --- |
 | `LISTEN_ADDR` | `:8080` | HTTP listen address |
-| `APP_ENV` | `development` | One of `development`, `staging`, `production` |
+| `APP_ENV` | `development` | One of `development`, `staging`, `production`. Must be set explicitly inside Kubernetes |
 | `LOG_LEVEL` | `info` | One of `debug`, `info`, `warn`, `error` |
 | `SHUTDOWN_TIMEOUT` | `10s` | Grace period for in-flight requests on shutdown |
 | `DATABASE_URL` | compose DB on `localhost:5433` | PostgreSQL connection string |
@@ -112,7 +112,7 @@ in.
 | `FRONTEND_BASE_URL` | `http://localhost:8080` | Where the browser lands after login |
 | `SAML_IDP_METADATA_URL` | — (SSO disabled) | Okta IdP metadata URL |
 | `SAML_ALLOW_IDP_INITIATED` | `false` | Accept SAML responses without `InResponseTo` (IdP-initiated sign-in). An open product decision; off until made |
-| `RELAY_STATE_SECRET` | insecure dev value | HMAC secret for the RelayState token |
+| `RELAY_STATE_SECRET` | insecure dev value | HMAC secret for the RelayState token. Outside development: at least 32 characters and not the development default |
 | `SESSION_COOKIE_NAME` | `__identity_session` | Session cookie name |
 | `SESSION_IDLE_TIMEOUT` | `24h` | Session idle expiry (slides with activity) |
 | `SESSION_LIFETIME` | `720h` | Absolute session lifetime |
@@ -410,6 +410,13 @@ each discovered only by wiring a real proxy:
 - Envoy sends the auth service only a small default header set — the
   session **cookie** must be listed in `headersToExtAuth`, otherwise
   validate never sees a session and denies everything.
+
+Cookie-authenticated **mutations** are checked for a trusted `Origin`
+(base and frontend URLs, the same rule as logout); a request without an
+Origin — the router, a CLI — passes, a foreign origin gets `FORBIDDEN`
+before any resolver runs. Reads are not checked. This only works if the
+router forwards the browser's `Origin` header to the subgraph, so the
+production router configuration must propagate it (the stand's does).
 
 For federation, the router propagates the session cookie to subgraphs
 (so this service authenticates router calls with its existing session

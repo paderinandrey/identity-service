@@ -124,7 +124,7 @@ func newEnv(t *testing.T) *env {
 	users := testUserSource{store: store, access: accessStore}
 
 	e.counting = &countingAccess{AccessDirectory: accessStore, calls: map[string]int{}}
-	gql := NewServer(&Resolver{Directory: store, Access: e.counting, Logger: logger}, sessions, users, logger)
+	gql := NewServer(&Resolver{Directory: store, Access: e.counting, Logger: logger}, sessions, users, []string{"http://app.example.com"}, logger)
 
 	mux := http.NewServeMux()
 	mux.Handle("POST /graphql", gql)
@@ -251,6 +251,25 @@ func (c *client) query(t *testing.T, query string, vars map[string]any) gqlRespo
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"query": query, "variables": vars})
 	resp, err := c.http.Post(c.url+"/graphql", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var out gqlResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	return out
+}
+
+// queryFrom is query with a browser Origin header attached.
+func (c *client) queryFrom(t *testing.T, origin, query string, vars map[string]any) gqlResponse {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"query": query, "variables": vars})
+	req, _ := http.NewRequest(http.MethodPost, c.url+"/graphql", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", origin)
+	resp, err := c.http.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -663,6 +682,46 @@ func TestFederation(t *testing.T) {
 func TestMain(m *testing.M) {
 	fmt.Fprintln(os.Stderr, "graphql integration tests use docker-compose PostgreSQL/Redis (run `mise run up`)")
 	os.Exit(m.Run())
+}
+
+func TestMutationRequiresTrustedOrigin(t *testing.T) {
+	e := newEnv(t)
+	admin := e.login(t, e.admin)
+	grant := `mutation($u: ID!, $r: String!) { grantRole(userId: $u, role: $r) { id } }`
+	vars := map[string]any{"u": e.alice.ID, "r": "gsh/sourcing_manager"}
+	journal := func() int {
+		var n int
+		if err := e.pool.QueryRow(t.Context(), "SELECT count(*) FROM access_audit_log WHERE action = 'role.grant'").Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	before := journal()
+
+	// A cross-site page carrying the admin's cookie.
+	foreign := admin.queryFrom(t, "https://evil.example.com", grant, vars)
+	if foreign.errorCode() != "FORBIDDEN" || foreign.Data["grantRole"] != nil {
+		t.Fatalf("mutation from a foreign origin: code=%q data=%s; want FORBIDDEN and no data", foreign.errorCode(), foreign.Data["grantRole"])
+	}
+	if journal() != before {
+		t.Error("a refused mutation must not reach the journal")
+	}
+
+	// Reads are not state changes: no Origin check.
+	if resp := admin.queryFrom(t, "https://evil.example.com", `{ me { user { id } } }`, nil); resp.errorCode() != "" {
+		t.Errorf("read from a foreign origin refused: %v", resp.Errors)
+	}
+
+	// The frontend's own origin, and a non-browser caller without Origin.
+	if resp := admin.queryFrom(t, "http://app.example.com", grant, vars); resp.errorCode() != "" {
+		t.Errorf("mutation from the trusted origin refused: %v", resp.Errors)
+	}
+	if resp := admin.query(t, grant, vars); resp.errorCode() != "" {
+		t.Errorf("mutation without Origin refused: %v", resp.Errors)
+	}
+	if journal() != before+1 {
+		t.Errorf("journal entries = %d, want %d (one grant, idempotent repeat)", journal(), before+1)
+	}
 }
 
 func TestEntityBatchIsCapped(t *testing.T) {

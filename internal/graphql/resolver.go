@@ -63,9 +63,11 @@ type Resolver struct {
 }
 
 // NewServer builds the /graphql handler: session-authenticated viewer,
-// POST transport, introspection for authenticated callers, a body cap
-// and a complexity budget that counts list sizes.
-func NewServer(resolver *Resolver, manager *session.Manager, users session.UserSource, logger *slog.Logger) http.Handler {
+// POST transport, introspection for authenticated callers, a body cap,
+// a complexity budget that counts list sizes and an Origin check on
+// mutations. allowedOrigins lists the browser origins permitted to run
+// mutations (base and frontend URLs); non-browser callers send no Origin.
+func NewServer(resolver *Resolver, manager *session.Manager, users session.UserSource, allowedOrigins []string, logger *slog.Logger) http.Handler {
 	cfg := generated.Config{Resolvers: resolver}
 	// gqlgen's default costs a list as one element; without multipliers
 	// a budget would not bound anything. Aliases are summed by gqlgen.
@@ -83,6 +85,7 @@ func NewServer(resolver *Resolver, manager *session.Manager, users session.UserS
 	srv.AddTransport(transport.POST{})
 	srv.Use(extension.Introspection{})
 	srv.Use(extension.FixedComplexityLimit(complexityBudget))
+	srv.AroundOperations(requireTrustedOrigin(session.OriginSet(allowedOrigins)))
 	srv.AroundOperations(limitEntityBatches)
 
 	capped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
