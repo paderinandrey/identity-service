@@ -119,6 +119,7 @@ in.
 | `SESSIONS_MAX_CONCURRENT` | `100` | Per-user session cap; oldest are evicted |
 | `USER_REVOCATION_DELAY` | `60s` | Max staleness of the user active-flag cache |
 | `PERMISSIONS_CACHE_TTL` | `60s` | Max staleness of effective permissions (revocation delay) |
+| `CACHE_MAX_ENTRIES` | `10000` | Capacity of each hot-path cache (users, permissions); least recently used entries are evicted |
 | `SCIM_TOKEN` | — (SCIM disabled) | Bearer token for the Okta SCIM client (min 32 chars) |
 | `RABBITMQ_URL` | compose broker on `localhost:5673` | RabbitMQ connection string (user events) |
 | `EVENTS_EXCHANGE` | `identity.events` | Topic exchange for user-change events |
@@ -316,7 +317,8 @@ Two notes for the suites:
   `sign_ins_total{result}`, `scim_operations_total{op}`,
   `session_revocation_errors_total` (deactivations whose sessions could not
   be destroyed after the revocation was recorded) and
-  `cache_requests_total{cache,result}` for the permissions/active caches.
+  `cache_requests_total{cache,result}`, `cache_entries{cache}` and
+  `cache_evictions_total{cache}` for the user/permissions caches.
 
 ## Kubernetes
 

@@ -7,6 +7,9 @@ import (
 
 type countingCache struct{ hits, misses int }
 
+func (c *countingCache) SizeSet(int) {}
+func (c *countingCache) Evicted()    {}
+
 func (c *countingCache) Observe(hit bool) {
 	if hit {
 		c.hits++
@@ -17,7 +20,7 @@ func (c *countingCache) Observe(hit bool) {
 
 func TestUserCacheMetrics(t *testing.T) {
 	store := &fakeStore{findByID: map[string]*User{"u1": {ID: "u1", Active: true}}}
-	cache := NewUserCache(store, time.Minute)
+	cache := NewUserCache(store, time.Minute, 100)
 	counter := &countingCache{}
 	cache.SetMetrics(counter)
 

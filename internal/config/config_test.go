@@ -254,3 +254,19 @@ func TestSAMLAllowIDPInitiated(t *testing.T) {
 		t.Error("non-boolean SAML_ALLOW_IDP_INITIATED must be rejected")
 	}
 }
+
+func TestCacheMaxEntries(t *testing.T) {
+	cfg, err := Load()
+	if err != nil || cfg.CacheMaxEntries != DefaultCacheMaxEntries {
+		t.Fatalf("default = %d, %v", cfg.CacheMaxEntries, err)
+	}
+	t.Setenv(EnvCacheMaxEntries, "250")
+	cfg, err = Load()
+	if err != nil || cfg.CacheMaxEntries != 250 {
+		t.Errorf("CACHE_MAX_ENTRIES=250: %d, %v", cfg.CacheMaxEntries, err)
+	}
+	t.Setenv(EnvCacheMaxEntries, "0")
+	if _, err := Load(); err == nil {
+		t.Error("non-positive CACHE_MAX_ENTRIES must be rejected")
+	}
+}
