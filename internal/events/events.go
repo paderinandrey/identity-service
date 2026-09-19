@@ -39,13 +39,17 @@ type Payload struct {
 	User          UserSnapshot `json:"user"`
 }
 
+// now is the clock behind OccurredAt; tests pin it so that the published
+// examples in docs/events are reproducible.
+var now = time.Now
+
 // NewPayload builds an event body for the user; ID is filled by the
 // outbox insert.
 func NewPayload(eventType string, u *identity.User) Payload {
 	return Payload{
 		Type:          eventType,
 		SchemaVersion: SchemaVersion,
-		OccurredAt:    time.Now().UTC(),
+		OccurredAt:    now().UTC(),
 		User: UserSnapshot{
 			ID:      u.ID,
 			Email:   u.Email,

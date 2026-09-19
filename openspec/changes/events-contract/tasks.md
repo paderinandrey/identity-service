@@ -2,9 +2,9 @@
 
 ## 1. Контракт и golden-тесты
 
-- [ ] 1.1 `docs/events/user-event.schema.json` (JSON Schema 2020-12, строгая: enum типов, uuid, date-time, `additionalProperties: false`) и `docs/events/user-events.md` (exchange, routing keys, свойства AMQP, семантика типов, обязанности консьюмера с SQL-образцом `UPDATE … WHERE version < $new`, replay, что считать ошибкой); проверить `mise run lint` не трогает docs
-- [ ] 1.2 `events.go`: часы пакета, подменяемые в тестах; `internal/events/contract_test.go` с `santhosh-tekuri/jsonschema/v6` (test-only в `go.mod`): payload каждого типа проходит схему; `docs/events/examples/<type>.json` равен payload байт-в-байт, флаг `-update` перезаписывает; сгенерировать примеры и проверить, что удаление поля из схемы или примера роняет тест
-- [ ] 1.3 README «User events» ссылается на `docs/events/` вместо встроенного JSON; `go test ./internal/events/` зелёный
+- [x] 1.1 `docs/events/user-event.schema.json` (JSON Schema 2020-12, строгая: enum типов, uuid, date-time, `additionalProperties: false`) и `docs/events/user-events.md` (exchange, routing keys, свойства AMQP, семантика типов, обязанности консьюмера с SQL-образцом `UPDATE … WHERE version < $new`, replay, что считать ошибкой); проверить `mise run lint` не трогает docs
+- [x] 1.2 `events.go`: часы пакета, подменяемые в тестах; `internal/events/contract_test.go` с `santhosh-tekuri/jsonschema/v6` (test-only в `go.mod`): payload каждого типа проходит схему; `docs/events/examples/<type>.json` равен payload байт-в-байт, флаг `-update` перезаписывает; сгенерировать примеры и проверить, что удаление поля из схемы или примера роняет тест
+- [x] 1.3 README «User events» ссылается на `docs/events/` вместо встроенного JSON; `go test ./internal/events/` зелёный
 
 ## 2. Референсный консьюмер
 
