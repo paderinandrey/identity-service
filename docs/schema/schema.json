@@ -1,0 +1,1692 @@
+{
+  "name": "identity_development",
+  "tables": [
+    {
+      "name": "public.access_audit_log",
+      "type": "BASE TABLE",
+      "comment": "Append-only journal of access changes, written in the same transaction as the change",
+      "columns": [
+        {
+          "name": "action",
+          "type": "text",
+          "nullable": false,
+          "comment": "Action name, e.g. role.grant, role.revoke, role.composition"
+        },
+        {
+          "name": "actor",
+          "type": "text",
+          "nullable": false,
+          "comment": "Who performed the change (cli or a user reference)"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": false,
+          "default": "now()",
+          "comment": "When the change happened"
+        },
+        {
+          "name": "details",
+          "type": "jsonb",
+          "nullable": false,
+          "default": "'{}'::jsonb",
+          "comment": "Action details (application/role/permission names)"
+        },
+        {
+          "name": "id",
+          "type": "uuid",
+          "nullable": false,
+          "default": "gen_random_uuid()",
+          "comment": "Journal entry UUID"
+        },
+        {
+          "name": "role_id",
+          "type": "uuid",
+          "nullable": true,
+          "comment": "Affected role; kept without FK so history survives role deletion"
+        },
+        {
+          "name": "target_user_id",
+          "type": "uuid",
+          "nullable": true,
+          "comment": "Affected user, when the action targets a user"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "access_audit_log_created_at_idx",
+          "def": "CREATE INDEX access_audit_log_created_at_idx ON public.access_audit_log USING btree (created_at)",
+          "table": "public.access_audit_log",
+          "columns": [
+            "created_at"
+          ]
+        },
+        {
+          "name": "access_audit_log_pkey",
+          "def": "CREATE UNIQUE INDEX access_audit_log_pkey ON public.access_audit_log USING btree (id)",
+          "table": "public.access_audit_log",
+          "columns": [
+            "id"
+          ]
+        },
+        {
+          "name": "access_audit_log_target_user_idx",
+          "def": "CREATE INDEX access_audit_log_target_user_idx ON public.access_audit_log USING btree (target_user_id)",
+          "table": "public.access_audit_log",
+          "columns": [
+            "target_user_id"
+          ]
+        }
+      ],
+      "constraints": [
+        {
+          "name": "access_audit_log_action_not_null",
+          "type": "n",
+          "def": "NOT NULL action",
+          "table": "public.access_audit_log",
+          "referenced_table": "",
+          "columns": [
+            "action"
+          ]
+        },
+        {
+          "name": "access_audit_log_actor_not_null",
+          "type": "n",
+          "def": "NOT NULL actor",
+          "table": "public.access_audit_log",
+          "referenced_table": "",
+          "columns": [
+            "actor"
+          ]
+        },
+        {
+          "name": "access_audit_log_created_at_not_null",
+          "type": "n",
+          "def": "NOT NULL created_at",
+          "table": "public.access_audit_log",
+          "referenced_table": "",
+          "columns": [
+            "created_at"
+          ]
+        },
+        {
+          "name": "access_audit_log_details_not_null",
+          "type": "n",
+          "def": "NOT NULL details",
+          "table": "public.access_audit_log",
+          "referenced_table": "",
+          "columns": [
+            "details"
+          ]
+        },
+        {
+          "name": "access_audit_log_id_not_null",
+          "type": "n",
+          "def": "NOT NULL id",
+          "table": "public.access_audit_log",
+          "referenced_table": "",
+          "columns": [
+            "id"
+          ]
+        },
+        {
+          "name": "access_audit_log_pkey",
+          "type": "PRIMARY KEY",
+          "def": "PRIMARY KEY (id)",
+          "table": "public.access_audit_log",
+          "referenced_table": "",
+          "columns": [
+            "id"
+          ]
+        },
+        {
+          "name": "access_audit_log_target_user_id_fkey",
+          "type": "FOREIGN KEY",
+          "def": "FOREIGN KEY (target_user_id) REFERENCES users(id) ON DELETE RESTRICT",
+          "table": "public.access_audit_log",
+          "referenced_table": "public.users",
+          "columns": [
+            "target_user_id"
+          ],
+          "referenced_columns": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "public.applications",
+      "type": "BASE TABLE",
+      "comment": "Business applications owning roles and permissions (e.g. gsh, dfm)",
+      "columns": [
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": false,
+          "default": "now()",
+          "comment": "Row creation timestamp"
+        },
+        {
+          "name": "id",
+          "type": "uuid",
+          "nullable": false,
+          "default": "gen_random_uuid()",
+          "comment": "Application UUID"
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "nullable": false,
+          "comment": "Unique application name"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "applications_name_unique",
+          "def": "CREATE UNIQUE INDEX applications_name_unique ON public.applications USING btree (name)",
+          "table": "public.applications",
+          "columns": [
+            "name"
+          ]
+        },
+        {
+          "name": "applications_pkey",
+          "def": "CREATE UNIQUE INDEX applications_pkey ON public.applications USING btree (id)",
+          "table": "public.applications",
+          "columns": [
+            "id"
+          ]
+        }
+      ],
+      "constraints": [
+        {
+          "name": "applications_created_at_not_null",
+          "type": "n",
+          "def": "NOT NULL created_at",
+          "table": "public.applications",
+          "referenced_table": "",
+          "columns": [
+            "created_at"
+          ]
+        },
+        {
+          "name": "applications_id_not_null",
+          "type": "n",
+          "def": "NOT NULL id",
+          "table": "public.applications",
+          "referenced_table": "",
+          "columns": [
+            "id"
+          ]
+        },
+        {
+          "name": "applications_name_not_null",
+          "type": "n",
+          "def": "NOT NULL name",
+          "table": "public.applications",
+          "referenced_table": "",
+          "columns": [
+            "name"
+          ]
+        },
+        {
+          "name": "applications_name_unique",
+          "type": "UNIQUE",
+          "def": "UNIQUE (name)",
+          "table": "public.applications",
+          "referenced_table": "",
+          "columns": [
+            "name"
+          ]
+        },
+        {
+          "name": "applications_pkey",
+          "type": "PRIMARY KEY",
+          "def": "PRIMARY KEY (id)",
+          "table": "public.applications",
+          "referenced_table": "",
+          "columns": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "public.permissions",
+      "type": "BASE TABLE",
+      "comment": "Permissions owned by applications; granted to users through roles",
+      "columns": [
+        {
+          "name": "application_id",
+          "type": "uuid",
+          "nullable": false,
+          "comment": "Owning application"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": false,
+          "default": "now()",
+          "comment": "Row creation timestamp"
+        },
+        {
+          "name": "id",
+          "type": "uuid",
+          "nullable": false,
+          "default": "gen_random_uuid()",
+          "comment": "Permission UUID"
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "nullable": false,
+          "comment": "Permission name, unique within the application"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "permissions_application_name_unique",
+          "def": "CREATE UNIQUE INDEX permissions_application_name_unique ON public.permissions USING btree (application_id, name)",
+          "table": "public.permissions",
+          "columns": [
+            "application_id",
+            "name"
+          ]
+        },
+        {
+          "name": "permissions_id_application_unique",
+          "def": "CREATE UNIQUE INDEX permissions_id_application_unique ON public.permissions USING btree (id, application_id)",
+          "table": "public.permissions",
+          "columns": [
+            "id",
+            "application_id"
+          ]
+        },
+        {
+          "name": "permissions_pkey",
+          "def": "CREATE UNIQUE INDEX permissions_pkey ON public.permissions USING btree (id)",
+          "table": "public.permissions",
+          "columns": [
+            "id"
+          ]
+        }
+      ],
+      "constraints": [
+        {
+          "name": "permissions_application_id_fkey",
+          "type": "FOREIGN KEY",
+          "def": "FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE RESTRICT",
+          "table": "public.permissions",
+          "referenced_table": "public.applications",
+          "columns": [
+            "application_id"
+          ],
+          "referenced_columns": [
+            "id"
+          ]
+        },
+        {
+          "name": "permissions_application_id_not_null",
+          "type": "n",
+          "def": "NOT NULL application_id",
+          "table": "public.permissions",
+          "referenced_table": "",
+          "columns": [
+            "application_id"
+          ]
+        },
+        {
+          "name": "permissions_application_name_unique",
+          "type": "UNIQUE",
+          "def": "UNIQUE (application_id, name)",
+          "table": "public.permissions",
+          "referenced_table": "",
+          "columns": [
+            "application_id",
+            "name"
+          ]
+        },
+        {
+          "name": "permissions_created_at_not_null",
+          "type": "n",
+          "def": "NOT NULL created_at",
+          "table": "public.permissions",
+          "referenced_table": "",
+          "columns": [
+            "created_at"
+          ]
+        },
+        {
+          "name": "permissions_id_application_unique",
+          "type": "UNIQUE",
+          "def": "UNIQUE (id, application_id)",
+          "table": "public.permissions",
+          "referenced_table": "",
+          "columns": [
+            "id",
+            "application_id"
+          ]
+        },
+        {
+          "name": "permissions_id_not_null",
+          "type": "n",
+          "def": "NOT NULL id",
+          "table": "public.permissions",
+          "referenced_table": "",
+          "columns": [
+            "id"
+          ]
+        },
+        {
+          "name": "permissions_name_not_null",
+          "type": "n",
+          "def": "NOT NULL name",
+          "table": "public.permissions",
+          "referenced_table": "",
+          "columns": [
+            "name"
+          ]
+        },
+        {
+          "name": "permissions_pkey",
+          "type": "PRIMARY KEY",
+          "def": "PRIMARY KEY (id)",
+          "table": "public.permissions",
+          "referenced_table": "",
+          "columns": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "public.role_permissions",
+      "type": "BASE TABLE",
+      "comment": "Role composition; same-application invariant enforced by composite FKs",
+      "columns": [
+        {
+          "name": "application_id",
+          "type": "uuid",
+          "nullable": false,
+          "comment": "Application owning both the role and the permission"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": false,
+          "default": "now()",
+          "comment": "When the permission was added to the role"
+        },
+        {
+          "name": "permission_id",
+          "type": "uuid",
+          "nullable": false,
+          "comment": "Permission included in the role"
+        },
+        {
+          "name": "role_id",
+          "type": "uuid",
+          "nullable": false,
+          "comment": "Role"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "role_permissions_pkey",
+          "def": "CREATE UNIQUE INDEX role_permissions_pkey ON public.role_permissions USING btree (role_id, permission_id)",
+          "table": "public.role_permissions",
+          "columns": [
+            "role_id",
+            "permission_id"
+          ]
+        }
+      ],
+      "constraints": [
+        {
+          "name": "role_permissions_application_id_not_null",
+          "type": "n",
+          "def": "NOT NULL application_id",
+          "table": "public.role_permissions",
+          "referenced_table": "",
+          "columns": [
+            "application_id"
+          ]
+        },
+        {
+          "name": "role_permissions_created_at_not_null",
+          "type": "n",
+          "def": "NOT NULL created_at",
+          "table": "public.role_permissions",
+          "referenced_table": "",
+          "columns": [
+            "created_at"
+          ]
+        },
+        {
+          "name": "role_permissions_permission_id_application_id_fkey",
+          "type": "FOREIGN KEY",
+          "def": "FOREIGN KEY (permission_id, application_id) REFERENCES permissions(id, application_id) ON DELETE CASCADE",
+          "table": "public.role_permissions",
+          "referenced_table": "public.permissions",
+          "columns": [
+            "permission_id",
+            "application_id"
+          ],
+          "referenced_columns": [
+            "id",
+            "application_id"
+          ]
+        },
+        {
+          "name": "role_permissions_permission_id_not_null",
+          "type": "n",
+          "def": "NOT NULL permission_id",
+          "table": "public.role_permissions",
+          "referenced_table": "",
+          "columns": [
+            "permission_id"
+          ]
+        },
+        {
+          "name": "role_permissions_pkey",
+          "type": "PRIMARY KEY",
+          "def": "PRIMARY KEY (role_id, permission_id)",
+          "table": "public.role_permissions",
+          "referenced_table": "",
+          "columns": [
+            "role_id",
+            "permission_id"
+          ]
+        },
+        {
+          "name": "role_permissions_role_id_application_id_fkey",
+          "type": "FOREIGN KEY",
+          "def": "FOREIGN KEY (role_id, application_id) REFERENCES roles(id, application_id) ON DELETE CASCADE",
+          "table": "public.role_permissions",
+          "referenced_table": "public.roles",
+          "columns": [
+            "role_id",
+            "application_id"
+          ],
+          "referenced_columns": [
+            "id",
+            "application_id"
+          ]
+        },
+        {
+          "name": "role_permissions_role_id_not_null",
+          "type": "n",
+          "def": "NOT NULL role_id",
+          "table": "public.role_permissions",
+          "referenced_table": "",
+          "columns": [
+            "role_id"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "public.roles",
+      "type": "BASE TABLE",
+      "comment": "Roles owned by applications; assigned to users via user_roles",
+      "columns": [
+        {
+          "name": "application_id",
+          "type": "uuid",
+          "nullable": false,
+          "comment": "Owning application"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": false,
+          "default": "now()",
+          "comment": "Row creation timestamp"
+        },
+        {
+          "name": "id",
+          "type": "uuid",
+          "nullable": false,
+          "default": "gen_random_uuid()",
+          "comment": "Role UUID"
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "nullable": false,
+          "comment": "Role name, unique within the application"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "roles_application_name_unique",
+          "def": "CREATE UNIQUE INDEX roles_application_name_unique ON public.roles USING btree (application_id, name)",
+          "table": "public.roles",
+          "columns": [
+            "application_id",
+            "name"
+          ]
+        },
+        {
+          "name": "roles_id_application_unique",
+          "def": "CREATE UNIQUE INDEX roles_id_application_unique ON public.roles USING btree (id, application_id)",
+          "table": "public.roles",
+          "columns": [
+            "id",
+            "application_id"
+          ]
+        },
+        {
+          "name": "roles_pkey",
+          "def": "CREATE UNIQUE INDEX roles_pkey ON public.roles USING btree (id)",
+          "table": "public.roles",
+          "columns": [
+            "id"
+          ]
+        }
+      ],
+      "constraints": [
+        {
+          "name": "roles_application_id_fkey",
+          "type": "FOREIGN KEY",
+          "def": "FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE RESTRICT",
+          "table": "public.roles",
+          "referenced_table": "public.applications",
+          "columns": [
+            "application_id"
+          ],
+          "referenced_columns": [
+            "id"
+          ]
+        },
+        {
+          "name": "roles_application_id_not_null",
+          "type": "n",
+          "def": "NOT NULL application_id",
+          "table": "public.roles",
+          "referenced_table": "",
+          "columns": [
+            "application_id"
+          ]
+        },
+        {
+          "name": "roles_application_name_unique",
+          "type": "UNIQUE",
+          "def": "UNIQUE (application_id, name)",
+          "table": "public.roles",
+          "referenced_table": "",
+          "columns": [
+            "application_id",
+            "name"
+          ]
+        },
+        {
+          "name": "roles_created_at_not_null",
+          "type": "n",
+          "def": "NOT NULL created_at",
+          "table": "public.roles",
+          "referenced_table": "",
+          "columns": [
+            "created_at"
+          ]
+        },
+        {
+          "name": "roles_id_application_unique",
+          "type": "UNIQUE",
+          "def": "UNIQUE (id, application_id)",
+          "table": "public.roles",
+          "referenced_table": "",
+          "columns": [
+            "id",
+            "application_id"
+          ]
+        },
+        {
+          "name": "roles_id_not_null",
+          "type": "n",
+          "def": "NOT NULL id",
+          "table": "public.roles",
+          "referenced_table": "",
+          "columns": [
+            "id"
+          ]
+        },
+        {
+          "name": "roles_name_not_null",
+          "type": "n",
+          "def": "NOT NULL name",
+          "table": "public.roles",
+          "referenced_table": "",
+          "columns": [
+            "name"
+          ]
+        },
+        {
+          "name": "roles_pkey",
+          "type": "PRIMARY KEY",
+          "def": "PRIMARY KEY (id)",
+          "table": "public.roles",
+          "referenced_table": "",
+          "columns": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "public.user_events_outbox",
+      "type": "BASE TABLE",
+      "comment": "Transactional outbox: user-change events awaiting publication to RabbitMQ",
+      "columns": [
+        {
+          "name": "attempts",
+          "type": "integer",
+          "nullable": false,
+          "default": "0",
+          "comment": "Publish attempts counter"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": false,
+          "default": "now()",
+          "comment": "When the event was recorded (with the user change transaction)"
+        },
+        {
+          "name": "event_type",
+          "type": "text",
+          "nullable": false,
+          "comment": "Event type, e.g. identity.user.updated"
+        },
+        {
+          "name": "id",
+          "type": "uuid",
+          "nullable": false,
+          "default": "gen_random_uuid()",
+          "comment": "Event UUID; published as the AMQP message id"
+        },
+        {
+          "name": "last_error",
+          "type": "text",
+          "nullable": true,
+          "comment": "Last publish error, if any"
+        },
+        {
+          "name": "payload",
+          "type": "jsonb",
+          "nullable": false,
+          "comment": "Event body as delivered to consumers"
+        },
+        {
+          "name": "published_at",
+          "type": "timestamp with time zone",
+          "nullable": true,
+          "comment": "Broker publish timestamp; NULL while pending"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "user_events_outbox_pkey",
+          "def": "CREATE UNIQUE INDEX user_events_outbox_pkey ON public.user_events_outbox USING btree (id)",
+          "table": "public.user_events_outbox",
+          "columns": [
+            "id"
+          ]
+        },
+        {
+          "name": "user_events_outbox_unpublished_idx",
+          "def": "CREATE INDEX user_events_outbox_unpublished_idx ON public.user_events_outbox USING btree (created_at) WHERE (published_at IS NULL)",
+          "table": "public.user_events_outbox",
+          "columns": [
+            "created_at"
+          ]
+        }
+      ],
+      "constraints": [
+        {
+          "name": "user_events_outbox_attempts_not_null",
+          "type": "n",
+          "def": "NOT NULL attempts",
+          "table": "public.user_events_outbox",
+          "referenced_table": "",
+          "columns": [
+            "attempts"
+          ]
+        },
+        {
+          "name": "user_events_outbox_created_at_not_null",
+          "type": "n",
+          "def": "NOT NULL created_at",
+          "table": "public.user_events_outbox",
+          "referenced_table": "",
+          "columns": [
+            "created_at"
+          ]
+        },
+        {
+          "name": "user_events_outbox_event_type_not_null",
+          "type": "n",
+          "def": "NOT NULL event_type",
+          "table": "public.user_events_outbox",
+          "referenced_table": "",
+          "columns": [
+            "event_type"
+          ]
+        },
+        {
+          "name": "user_events_outbox_id_not_null",
+          "type": "n",
+          "def": "NOT NULL id",
+          "table": "public.user_events_outbox",
+          "referenced_table": "",
+          "columns": [
+            "id"
+          ]
+        },
+        {
+          "name": "user_events_outbox_payload_not_null",
+          "type": "n",
+          "def": "NOT NULL payload",
+          "table": "public.user_events_outbox",
+          "referenced_table": "",
+          "columns": [
+            "payload"
+          ]
+        },
+        {
+          "name": "user_events_outbox_pkey",
+          "type": "PRIMARY KEY",
+          "def": "PRIMARY KEY (id)",
+          "table": "public.user_events_outbox",
+          "referenced_table": "",
+          "columns": [
+            "id"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "public.user_identities",
+      "type": "BASE TABLE",
+      "comment": "External identity mappings (SSO providers) to unified users",
+      "columns": [
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": false,
+          "default": "now()",
+          "comment": "When the identity was linked"
+        },
+        {
+          "name": "id",
+          "type": "uuid",
+          "nullable": false,
+          "default": "gen_random_uuid()",
+          "comment": "Mapping row UUID"
+        },
+        {
+          "name": "provider",
+          "type": "text",
+          "nullable": false,
+          "comment": "Identity provider name, e.g. okta"
+        },
+        {
+          "name": "subject",
+          "type": "text",
+          "nullable": false,
+          "comment": "Stable subject issued by the provider"
+        },
+        {
+          "name": "user_id",
+          "type": "uuid",
+          "nullable": false,
+          "comment": "Owning user; deletion restricted to preserve history"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "user_identities_pkey",
+          "def": "CREATE UNIQUE INDEX user_identities_pkey ON public.user_identities USING btree (id)",
+          "table": "public.user_identities",
+          "columns": [
+            "id"
+          ]
+        },
+        {
+          "name": "user_identities_provider_subject_unique",
+          "def": "CREATE UNIQUE INDEX user_identities_provider_subject_unique ON public.user_identities USING btree (provider, subject)",
+          "table": "public.user_identities",
+          "columns": [
+            "provider",
+            "subject"
+          ]
+        },
+        {
+          "name": "user_identities_user_provider_unique",
+          "def": "CREATE UNIQUE INDEX user_identities_user_provider_unique ON public.user_identities USING btree (user_id, provider)",
+          "table": "public.user_identities",
+          "columns": [
+            "user_id",
+            "provider"
+          ]
+        }
+      ],
+      "constraints": [
+        {
+          "name": "user_identities_created_at_not_null",
+          "type": "n",
+          "def": "NOT NULL created_at",
+          "table": "public.user_identities",
+          "referenced_table": "",
+          "columns": [
+            "created_at"
+          ]
+        },
+        {
+          "name": "user_identities_id_not_null",
+          "type": "n",
+          "def": "NOT NULL id",
+          "table": "public.user_identities",
+          "referenced_table": "",
+          "columns": [
+            "id"
+          ]
+        },
+        {
+          "name": "user_identities_pkey",
+          "type": "PRIMARY KEY",
+          "def": "PRIMARY KEY (id)",
+          "table": "public.user_identities",
+          "referenced_table": "",
+          "columns": [
+            "id"
+          ]
+        },
+        {
+          "name": "user_identities_provider_not_null",
+          "type": "n",
+          "def": "NOT NULL provider",
+          "table": "public.user_identities",
+          "referenced_table": "",
+          "columns": [
+            "provider"
+          ]
+        },
+        {
+          "name": "user_identities_provider_subject_unique",
+          "type": "UNIQUE",
+          "def": "UNIQUE (provider, subject)",
+          "table": "public.user_identities",
+          "referenced_table": "",
+          "columns": [
+            "provider",
+            "subject"
+          ]
+        },
+        {
+          "name": "user_identities_subject_not_null",
+          "type": "n",
+          "def": "NOT NULL subject",
+          "table": "public.user_identities",
+          "referenced_table": "",
+          "columns": [
+            "subject"
+          ]
+        },
+        {
+          "name": "user_identities_user_id_fkey",
+          "type": "FOREIGN KEY",
+          "def": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT",
+          "table": "public.user_identities",
+          "referenced_table": "public.users",
+          "columns": [
+            "user_id"
+          ],
+          "referenced_columns": [
+            "id"
+          ]
+        },
+        {
+          "name": "user_identities_user_id_not_null",
+          "type": "n",
+          "def": "NOT NULL user_id",
+          "table": "public.user_identities",
+          "referenced_table": "",
+          "columns": [
+            "user_id"
+          ]
+        },
+        {
+          "name": "user_identities_user_provider_unique",
+          "type": "UNIQUE",
+          "def": "UNIQUE (user_id, provider)",
+          "table": "public.user_identities",
+          "referenced_table": "",
+          "columns": [
+            "user_id",
+            "provider"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "public.user_roles",
+      "type": "BASE TABLE",
+      "comment": "Role assignments; the only source of truth for user access",
+      "columns": [
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": false,
+          "default": "now()",
+          "comment": "When the role was granted"
+        },
+        {
+          "name": "granted_by",
+          "type": "text",
+          "nullable": false,
+          "default": "''::text",
+          "comment": "Actor that granted the role (cli or a user reference)"
+        },
+        {
+          "name": "role_id",
+          "type": "uuid",
+          "nullable": false,
+          "comment": "Assigned role"
+        },
+        {
+          "name": "user_id",
+          "type": "uuid",
+          "nullable": false,
+          "comment": "Assigned user"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "user_roles_pkey",
+          "def": "CREATE UNIQUE INDEX user_roles_pkey ON public.user_roles USING btree (user_id, role_id)",
+          "table": "public.user_roles",
+          "columns": [
+            "user_id",
+            "role_id"
+          ]
+        }
+      ],
+      "constraints": [
+        {
+          "name": "user_roles_created_at_not_null",
+          "type": "n",
+          "def": "NOT NULL created_at",
+          "table": "public.user_roles",
+          "referenced_table": "",
+          "columns": [
+            "created_at"
+          ]
+        },
+        {
+          "name": "user_roles_granted_by_not_null",
+          "type": "n",
+          "def": "NOT NULL granted_by",
+          "table": "public.user_roles",
+          "referenced_table": "",
+          "columns": [
+            "granted_by"
+          ]
+        },
+        {
+          "name": "user_roles_pkey",
+          "type": "PRIMARY KEY",
+          "def": "PRIMARY KEY (user_id, role_id)",
+          "table": "public.user_roles",
+          "referenced_table": "",
+          "columns": [
+            "user_id",
+            "role_id"
+          ]
+        },
+        {
+          "name": "user_roles_role_id_fkey",
+          "type": "FOREIGN KEY",
+          "def": "FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE",
+          "table": "public.user_roles",
+          "referenced_table": "public.roles",
+          "columns": [
+            "role_id"
+          ],
+          "referenced_columns": [
+            "id"
+          ]
+        },
+        {
+          "name": "user_roles_role_id_not_null",
+          "type": "n",
+          "def": "NOT NULL role_id",
+          "table": "public.user_roles",
+          "referenced_table": "",
+          "columns": [
+            "role_id"
+          ]
+        },
+        {
+          "name": "user_roles_user_id_fkey",
+          "type": "FOREIGN KEY",
+          "def": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT",
+          "table": "public.user_roles",
+          "referenced_table": "public.users",
+          "columns": [
+            "user_id"
+          ],
+          "referenced_columns": [
+            "id"
+          ]
+        },
+        {
+          "name": "user_roles_user_id_not_null",
+          "type": "n",
+          "def": "NOT NULL user_id",
+          "table": "public.user_roles",
+          "referenced_table": "",
+          "columns": [
+            "user_id"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "public.users",
+      "type": "BASE TABLE",
+      "comment": "Unified application users shared across GSH/DFM ecosystem",
+      "columns": [
+        {
+          "name": "active",
+          "type": "boolean",
+          "nullable": false,
+          "default": "true",
+          "comment": "Whether login and session validation are allowed"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "nullable": false,
+          "default": "now()",
+          "comment": "Row creation timestamp"
+        },
+        {
+          "name": "email",
+          "type": "citext",
+          "nullable": false,
+          "comment": "Email attribute (case-insensitive unique); not an identity key"
+        },
+        {
+          "name": "id",
+          "type": "uuid",
+          "nullable": false,
+          "default": "gen_random_uuid()",
+          "comment": "Stable application-wide user UUID; never changes"
+        },
+        {
+          "name": "last_sign_in_at",
+          "type": "timestamp with time zone",
+          "nullable": true,
+          "comment": "Timestamp of the most recent successful sign-in"
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "nullable": false,
+          "default": "''::text",
+          "comment": "Display name"
+        },
+        {
+          "name": "session_epoch",
+          "type": "bigint",
+          "nullable": false,
+          "default": "0",
+          "comment": "Session generation: bumped in the deactivation transaction; a session is valid only while the epoch it recorded at sign-in equals this value"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "nullable": false,
+          "default": "now()",
+          "comment": "Row last update timestamp"
+        },
+        {
+          "name": "version",
+          "type": "bigint",
+          "nullable": false,
+          "default": "1",
+          "comment": "Profile version, incremented on every profile/active change; lets consumers drop stale updates"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "users_email_unique",
+          "def": "CREATE UNIQUE INDEX users_email_unique ON public.users USING btree (email)",
+          "table": "public.users",
+          "columns": [
+            "email"
+          ]
+        },
+        {
+          "name": "users_pkey",
+          "def": "CREATE UNIQUE INDEX users_pkey ON public.users USING btree (id)",
+          "table": "public.users",
+          "columns": [
+            "id"
+          ]
+        }
+      ],
+      "constraints": [
+        {
+          "name": "users_active_not_null",
+          "type": "n",
+          "def": "NOT NULL active",
+          "table": "public.users",
+          "referenced_table": "",
+          "columns": [
+            "active"
+          ]
+        },
+        {
+          "name": "users_created_at_not_null",
+          "type": "n",
+          "def": "NOT NULL created_at",
+          "table": "public.users",
+          "referenced_table": "",
+          "columns": [
+            "created_at"
+          ]
+        },
+        {
+          "name": "users_email_not_null",
+          "type": "n",
+          "def": "NOT NULL email",
+          "table": "public.users",
+          "referenced_table": "",
+          "columns": [
+            "email"
+          ]
+        },
+        {
+          "name": "users_email_unique",
+          "type": "UNIQUE",
+          "def": "UNIQUE (email)",
+          "table": "public.users",
+          "referenced_table": "",
+          "columns": [
+            "email"
+          ]
+        },
+        {
+          "name": "users_id_not_null",
+          "type": "n",
+          "def": "NOT NULL id",
+          "table": "public.users",
+          "referenced_table": "",
+          "columns": [
+            "id"
+          ]
+        },
+        {
+          "name": "users_name_not_null",
+          "type": "n",
+          "def": "NOT NULL name",
+          "table": "public.users",
+          "referenced_table": "",
+          "columns": [
+            "name"
+          ]
+        },
+        {
+          "name": "users_pkey",
+          "type": "PRIMARY KEY",
+          "def": "PRIMARY KEY (id)",
+          "table": "public.users",
+          "referenced_table": "",
+          "columns": [
+            "id"
+          ]
+        },
+        {
+          "name": "users_session_epoch_not_null",
+          "type": "n",
+          "def": "NOT NULL session_epoch",
+          "table": "public.users",
+          "referenced_table": "",
+          "columns": [
+            "session_epoch"
+          ]
+        },
+        {
+          "name": "users_updated_at_not_null",
+          "type": "n",
+          "def": "NOT NULL updated_at",
+          "table": "public.users",
+          "referenced_table": "",
+          "columns": [
+            "updated_at"
+          ]
+        },
+        {
+          "name": "users_version_not_null",
+          "type": "n",
+          "def": "NOT NULL version",
+          "table": "public.users",
+          "referenced_table": "",
+          "columns": [
+            "version"
+          ]
+        }
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "table": "public.access_audit_log",
+      "columns": [
+        "target_user_id"
+      ],
+      "cardinality": "zero_or_more",
+      "parent_table": "public.users",
+      "parent_columns": [
+        "id"
+      ],
+      "parent_cardinality": "zero_or_one",
+      "def": "FOREIGN KEY (target_user_id) REFERENCES users(id) ON DELETE RESTRICT"
+    },
+    {
+      "table": "public.permissions",
+      "columns": [
+        "application_id"
+      ],
+      "cardinality": "zero_or_more",
+      "parent_table": "public.applications",
+      "parent_columns": [
+        "id"
+      ],
+      "parent_cardinality": "exactly_one",
+      "def": "FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE RESTRICT"
+    },
+    {
+      "table": "public.role_permissions",
+      "columns": [
+        "role_id",
+        "application_id"
+      ],
+      "cardinality": "zero_or_more",
+      "parent_table": "public.roles",
+      "parent_columns": [
+        "id",
+        "application_id"
+      ],
+      "parent_cardinality": "exactly_one",
+      "def": "FOREIGN KEY (role_id, application_id) REFERENCES roles(id, application_id) ON DELETE CASCADE"
+    },
+    {
+      "table": "public.role_permissions",
+      "columns": [
+        "permission_id",
+        "application_id"
+      ],
+      "cardinality": "zero_or_more",
+      "parent_table": "public.permissions",
+      "parent_columns": [
+        "id",
+        "application_id"
+      ],
+      "parent_cardinality": "exactly_one",
+      "def": "FOREIGN KEY (permission_id, application_id) REFERENCES permissions(id, application_id) ON DELETE CASCADE"
+    },
+    {
+      "table": "public.roles",
+      "columns": [
+        "application_id"
+      ],
+      "cardinality": "zero_or_more",
+      "parent_table": "public.applications",
+      "parent_columns": [
+        "id"
+      ],
+      "parent_cardinality": "exactly_one",
+      "def": "FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE RESTRICT"
+    },
+    {
+      "table": "public.user_identities",
+      "columns": [
+        "user_id"
+      ],
+      "cardinality": "zero_or_more",
+      "parent_table": "public.users",
+      "parent_columns": [
+        "id"
+      ],
+      "parent_cardinality": "exactly_one",
+      "def": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT"
+    },
+    {
+      "table": "public.user_roles",
+      "columns": [
+        "user_id"
+      ],
+      "cardinality": "zero_or_more",
+      "parent_table": "public.users",
+      "parent_columns": [
+        "id"
+      ],
+      "parent_cardinality": "exactly_one",
+      "def": "FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT"
+    },
+    {
+      "table": "public.user_roles",
+      "columns": [
+        "role_id"
+      ],
+      "cardinality": "zero_or_more",
+      "parent_table": "public.roles",
+      "parent_columns": [
+        "id"
+      ],
+      "parent_cardinality": "exactly_one",
+      "def": "FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE"
+    }
+  ],
+  "functions": [
+    {
+      "name": "public.citext",
+      "return_type": "citext",
+      "arguments": "boolean",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citext",
+      "return_type": "citext",
+      "arguments": "character",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citext",
+      "return_type": "citext",
+      "arguments": "inet",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citext_cmp",
+      "return_type": "int4",
+      "arguments": "citext, citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citext_eq",
+      "return_type": "bool",
+      "arguments": "citext, citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citext_ge",
+      "return_type": "bool",
+      "arguments": "citext, citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citext_gt",
+      "return_type": "bool",
+      "arguments": "citext, citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citext_hash",
+      "return_type": "int4",
+      "arguments": "citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citext_hash_extended",
+      "return_type": "int8",
+      "arguments": "citext, bigint",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citext_larger",
+      "return_type": "citext",
+      "arguments": "citext, citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citext_le",
+      "return_type": "bool",
+      "arguments": "citext, citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citext_lt",
+      "return_type": "bool",
+      "arguments": "citext, citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citext_ne",
+      "return_type": "bool",
+      "arguments": "citext, citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citext_pattern_cmp",
+      "return_type": "int4",
+      "arguments": "citext, citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citext_pattern_ge",
+      "return_type": "bool",
+      "arguments": "citext, citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citext_pattern_gt",
+      "return_type": "bool",
+      "arguments": "citext, citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citext_pattern_le",
+      "return_type": "bool",
+      "arguments": "citext, citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citext_pattern_lt",
+      "return_type": "bool",
+      "arguments": "citext, citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citext_smaller",
+      "return_type": "citext",
+      "arguments": "citext, citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citextin",
+      "return_type": "citext",
+      "arguments": "cstring",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citextout",
+      "return_type": "cstring",
+      "arguments": "citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citextrecv",
+      "return_type": "citext",
+      "arguments": "internal",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.citextsend",
+      "return_type": "bytea",
+      "arguments": "citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.max",
+      "return_type": "citext",
+      "arguments": "citext",
+      "type": "a"
+    },
+    {
+      "name": "public.min",
+      "return_type": "citext",
+      "arguments": "citext",
+      "type": "a"
+    },
+    {
+      "name": "public.regexp_match",
+      "return_type": "_text",
+      "arguments": "string citext, pattern citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.regexp_match",
+      "return_type": "_text",
+      "arguments": "string citext, pattern citext, flags text",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.regexp_matches",
+      "return_type": "_text",
+      "arguments": "string citext, pattern citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.regexp_matches",
+      "return_type": "_text",
+      "arguments": "string citext, pattern citext, flags text",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.regexp_replace",
+      "return_type": "text",
+      "arguments": "string citext, pattern citext, replacement text",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.regexp_replace",
+      "return_type": "text",
+      "arguments": "string citext, pattern citext, replacement text, flags text",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.regexp_split_to_array",
+      "return_type": "_text",
+      "arguments": "string citext, pattern citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.regexp_split_to_array",
+      "return_type": "_text",
+      "arguments": "string citext, pattern citext, flags text",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.regexp_split_to_table",
+      "return_type": "text",
+      "arguments": "string citext, pattern citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.regexp_split_to_table",
+      "return_type": "text",
+      "arguments": "string citext, pattern citext, flags text",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.replace",
+      "return_type": "text",
+      "arguments": "citext, citext, citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.split_part",
+      "return_type": "text",
+      "arguments": "citext, citext, integer",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.strpos",
+      "return_type": "int4",
+      "arguments": "citext, citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.texticlike",
+      "return_type": "bool",
+      "arguments": "citext, citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.texticlike",
+      "return_type": "bool",
+      "arguments": "citext, text",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.texticnlike",
+      "return_type": "bool",
+      "arguments": "citext, citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.texticnlike",
+      "return_type": "bool",
+      "arguments": "citext, text",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.texticregexeq",
+      "return_type": "bool",
+      "arguments": "citext, citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.texticregexeq",
+      "return_type": "bool",
+      "arguments": "citext, text",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.texticregexne",
+      "return_type": "bool",
+      "arguments": "citext, citext",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.texticregexne",
+      "return_type": "bool",
+      "arguments": "citext, text",
+      "type": "FUNCTION"
+    },
+    {
+      "name": "public.translate",
+      "return_type": "text",
+      "arguments": "citext, citext, text",
+      "type": "FUNCTION"
+    }
+  ],
+  "driver": {
+    "name": "postgres",
+    "database_version": "PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+    "meta": {
+      "current_schema": "public",
+      "search_paths": [
+        "identity",
+        "public"
+      ],
+      "dict": {
+        "Functions": "Stored procedures and functions"
+      }
+    }
+  }
+}
