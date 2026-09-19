@@ -31,6 +31,11 @@ type Me struct {
 type Mutation struct {
 }
 
+type PageInfo struct {
+	EndCursor   *string `json:"endCursor,omitempty"`
+	HasNextPage bool    `json:"hasNextPage"`
+}
+
 type Query struct {
 }
 
@@ -58,3 +63,10 @@ type User struct {
 }
 
 func (User) IsEntity() {}
+
+// A page of users. Cursors are opaque; pass endCursor as `after` for the
+// next page.
+type UserConnection struct {
+	Nodes    []*User   `json:"nodes"`
+	PageInfo *PageInfo `json:"pageInfo"`
+}

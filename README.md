@@ -173,6 +173,18 @@ Grant the first access administrator once via CLI:
 
 ## GraphQL
 
+Limits on `POST /graphql`, all enforced before any resolver runs: the
+request body is capped at 1 MiB (like SAML and SCIM), and every query is
+priced against a complexity budget of 2000 that multiplies list fields by
+the requested size (`users` by `first`, `accessAuditLog` by `limit`,
+`applications` by a fixed directory weight), so aliasing a 200-user page
+ten times is rejected up front. `users` is a keyset-paged connection —
+`users(first: 50, after: <endCursor>) { nodes { … } pageInfo { endCursor
+hasNextPage } }` — with `first` capped at 200; a page's role assignments
+are loaded in one query. Federation `_entities` batches are capped at 200
+representations per operation, checked before execution. The HTTP server
+has 30 s read/write timeouts and a 120 s idle timeout.
+
 `POST /graphql` is an Apollo Federation v2 subgraph (`User` is an entity
 keyed by `id`); authentication is the browser session cookie. Directory
 queries (`me`, `users`, `user`, `applications`) are open to any

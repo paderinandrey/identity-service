@@ -136,10 +136,10 @@ install_out=$(helm install hook-probe charts/identity-service -n "$PROBE_NS" \
   --set image.repository=identity-service --set image.tag=dev --set image.pullPolicy=Never \
   --set config.APP_ENV=development --timeout 3m 2>&1) \
   || fail "helm install в пустой namespace не прошёл: $(tail -3 <<< "$install_out")"
-# Эталон — версия основной базы стенда: её мигрировал тот же образ, что
-# запускает хук. Считать по файлам в чекауте нельзя: образ и ветка могут
-# расходиться на одну миграцию.
-expected=$(probe_psql identity_development "SELECT max(version_id) FROM goose_db_version")
+# Эталон — число миграций в чекауте: stand-up собирает образ из него же,
+# и именно этот образ запускает хук. Основная база стенда эталоном быть не
+# может: при чередовании веток она бывает впереди текущей.
+expected=$(ls db/migrations/*.sql | wc -l | tr -d ' ')
 version=$(probe_psql "$PROBE_DB" "SELECT max(version_id) FROM goose_db_version")
 [ "$version" = "$expected" ] || fail "после первой установки версия схемы $version, ожидалась $expected"
 pass "helm install с нуля: хук отработал сам, версия схемы $version"

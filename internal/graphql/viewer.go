@@ -102,6 +102,7 @@ func authMiddleware(next http.Handler, manager *session.Manager, users session.U
 			return
 		}
 		ctx = context.WithValue(ctx, viewerKey{}, &Viewer{User: user, Permissions: perms})
+		ctx = withPrefetch(ctx)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
