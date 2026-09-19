@@ -39,13 +39,52 @@ type Handlers struct {
 // NewHandlers builds session endpoints. allowedOrigins lists origins
 // permitted to call state-changing endpoints (base and frontend URLs).
 func NewHandlers(manager *Manager, users UserSource, allowedOrigins []string) *Handlers {
-	origins := make(map[string]bool, len(allowedOrigins))
-	for _, o := range allowedOrigins {
-		if u, err := url.Parse(o); err == nil && u.Scheme != "" && u.Host != "" {
-			origins[u.Scheme+"://"+u.Host] = true
+	return &Handlers{manager: manager, users: users, allowedOrigins: OriginSet(allowedOrigins)}
+}
+
+// OriginSet normalises URLs (base URL, frontend URL) into the set of
+// browser origins allowed to drive state-changing, cookie-authenticated
+// requests. One rule for logout and for GraphQL mutations.
+func OriginSet(urls []string) map[string]bool {
+	origins := make(map[string]bool, len(urls))
+	for _, o := range urls {
+		if origin, ok := canonicalOrigin(o); ok {
+			origins[origin] = true
 		}
 	}
-	return &Handlers{manager: manager, users: users, allowedOrigins: origins}
+	return origins
+}
+
+// OriginAllowed accepts requests without an Origin header (non-browser
+// clients: the router, CLIs, tests) and browser requests whose Origin is
+// in the set. Both sides are compared in canonical form.
+func OriginAllowed(allowed map[string]bool, origin string) bool {
+	if origin == "" {
+		return true
+	}
+	canonical, ok := canonicalOrigin(origin)
+	return ok && allowed[canonical]
+}
+
+// canonicalOrigin reduces a URL or Origin value to the form a browser
+// serialises: lowercase scheme and host, no default port. A configured
+// "https://ID.Example.com:443" and the browser's "https://id.example.com"
+// must compare equal (Codex review, PR #9).
+func canonicalOrigin(raw string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	host := strings.ToLower(u.Hostname())
+	port := u.Port()
+	if (scheme == "https" && port == "443") || (scheme == "http" && port == "80") {
+		port = ""
+	}
+	if port != "" {
+		host += ":" + port
+	}
+	return scheme + "://" + host, true
 }
 
 // Register mounts the browser-facing routes on the public zone; the mux
@@ -153,9 +192,5 @@ func (h *Handlers) handleValidate(w http.ResponseWriter, r *http.Request) {
 // originAllowed accepts requests without an Origin header (non-browser
 // clients) and browser requests whose Origin is explicitly allowed.
 func (h *Handlers) originAllowed(r *http.Request) bool {
-	origin := r.Header.Get("Origin")
-	if origin == "" {
-		return true
-	}
-	return h.allowedOrigins[origin]
+	return OriginAllowed(h.allowedOrigins, r.Header.Get("Origin"))
 }

@@ -118,9 +118,9 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}, logger)
 
 	accessStore := postgres.NewAccessStore(pool)
-	userCache := identity.NewUserCache(store, cfg.UserRevocationDelay)
+	userCache := identity.NewUserCache(store, cfg.UserRevocationDelay, cfg.CacheMaxEntries)
 	userCache.SetMetrics(obs.Cache("user"))
-	permsCache := access.NewPermissionsCache(accessStore, cfg.PermissionsCacheTTL)
+	permsCache := access.NewPermissionsCache(accessStore, cfg.PermissionsCacheTTL, cfg.CacheMaxEntries)
 	permsCache.SetMetrics(obs.Cache("permissions"))
 	users := &userSource{users: userCache, perms: permsCache}
 	sessionHandlers := session.NewHandlers(sessions, users, []string{cfg.BaseURL, cfg.FrontendBaseURL})
@@ -128,7 +128,7 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		Directory: store,
 		Access:    accessStore,
 		Logger:    logger,
-	}, sessions, users, logger)
+	}, sessions, users, []string{cfg.BaseURL, cfg.FrontendBaseURL}, logger)
 
 	var samlService *samlsso.Service
 	if cfg.SAMLIdPMetadataURL != "" {

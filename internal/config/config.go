@@ -31,6 +31,7 @@ const (
 	EnvSessionsMaxConcurrent = "SESSIONS_MAX_CONCURRENT"
 	EnvUserRevocationDelay   = "USER_REVOCATION_DELAY"
 	EnvPermissionsCacheTTL   = "PERMISSIONS_CACHE_TTL"
+	EnvCacheMaxEntries       = "CACHE_MAX_ENTRIES"
 	EnvSCIMToken             = "SCIM_TOKEN"
 	EnvRabbitMQURL           = "RABBITMQ_URL"
 	EnvEventsExchange        = "EVENTS_EXCHANGE"
@@ -57,6 +58,9 @@ const (
 	DefaultSessionsMaxConcurrent = 100
 	DefaultUserRevocationDelay   = 60 * time.Second
 	DefaultPermissionsCacheTTL   = 60 * time.Second
+	// DefaultCacheMaxEntries bounds each hot-path cache; entries are tens
+	// of bytes, so this is megabytes at most.
+	DefaultCacheMaxEntries = 10000
 
 	DefaultRabbitMQURL    = "amqp://identity:identity@localhost:5673/"
 	DefaultEventsExchange = "identity.events"
@@ -97,6 +101,8 @@ type Config struct {
 	SessionsMaxConcurrent int
 	UserRevocationDelay   time.Duration
 	PermissionsCacheTTL   time.Duration
+	// CacheMaxEntries caps the user and permissions caches (each).
+	CacheMaxEntries int
 
 	// SCIMToken enables SCIM provisioning endpoints when non-empty.
 	SCIMToken string
@@ -132,6 +138,7 @@ func Load() (Config, error) {
 		SessionsMaxConcurrent: DefaultSessionsMaxConcurrent,
 		UserRevocationDelay:   DefaultUserRevocationDelay,
 		PermissionsCacheTTL:   DefaultPermissionsCacheTTL,
+		CacheMaxEntries:       DefaultCacheMaxEntries,
 	}
 
 	if v := os.Getenv(EnvListenAddr); v != "" {
@@ -182,6 +189,14 @@ func Load() (Config, error) {
 		cfg.SessionsMaxConcurrent = n
 	}
 
+	if v := os.Getenv(EnvCacheMaxEntries); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return Config{}, fmt.Errorf("%s: want a positive integer, got %q", EnvCacheMaxEntries, v)
+		}
+		cfg.CacheMaxEntries = n
+	}
+
 	if v := os.Getenv(EnvSessionCookieName); v != "" {
 		cfg.SessionCookieName = v
 	}
@@ -221,10 +236,25 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("%s must not be set in production", EnvE2ELoginToken)
 	}
 
+	// Inside Kubernetes the environment name must be explicit: a pod that
+	// forgot APP_ENV must not quietly run with development defaults
+	// (insecure cookie, placeholder secrets).
+	if os.Getenv(EnvAppEnv) == "" && os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		return Config{}, fmt.Errorf("%s must be set explicitly when running in Kubernetes", EnvAppEnv)
+	}
+
 	if cfg.IsDevelopment() {
 		applyDevelopmentDefaults(&cfg)
 	} else if missing := missingRequired(cfg); len(missing) > 0 {
 		return Config{}, fmt.Errorf("%s=%s requires environment variables: %s", EnvAppEnv, cfg.AppEnv, strings.Join(missing, ", "))
+	}
+	if !cfg.IsDevelopment() {
+		if len(cfg.RelayStateSecret) < 32 {
+			return Config{}, fmt.Errorf("%s must be at least 32 characters outside development", EnvRelayStateSecret)
+		}
+		if cfg.RelayStateSecret == DefaultRelayStateSecret {
+			return Config{}, fmt.Errorf("%s must not be the development default outside development", EnvRelayStateSecret)
+		}
 	}
 
 	return cfg, nil

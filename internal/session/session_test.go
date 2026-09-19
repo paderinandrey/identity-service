@@ -684,3 +684,31 @@ func TestDelayedRevocationCannotLowerFence(t *testing.T) {
 		t.Errorf("session at the current generation = %d, want 200", got.StatusCode)
 	}
 }
+
+func TestOriginSetCanonicalises(t *testing.T) {
+	// Codex review, PR #9: browsers send a lowercase host without the
+	// default port; a configured spelling must not decide the outcome.
+	allowed := OriginSet([]string{"https://ID.Example.com:443/", "http://app.example.com:8080/path"})
+	for _, ok := range []string{
+		"https://id.example.com",
+		"HTTPS://id.example.com",
+		"https://id.example.com:443",
+		"http://app.example.com:8080",
+		"", // non-browser caller
+	} {
+		if !OriginAllowed(allowed, ok) {
+			t.Errorf("origin %q must be allowed", ok)
+		}
+	}
+	for _, bad := range []string{
+		"http://id.example.com",       // scheme matters
+		"https://id.example.com:8443", // a different port is a different origin
+		"http://app.example.com",      // configured with :8080, not the default
+		"https://evil.example.com",
+		"not a url",
+	} {
+		if OriginAllowed(allowed, bad) {
+			t.Errorf("origin %q must be refused", bad)
+		}
+	}
+}

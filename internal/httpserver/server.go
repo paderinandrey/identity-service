@@ -84,9 +84,15 @@ func (s *Server) newServer(addr string, handler http.Handler) *http.Server {
 		handler = s.wrapper(handler)
 	}
 	return &http.Server{
-		Addr:              addr,
-		Handler:           handler,
+		Addr:    addr,
+		Handler: handler,
+		// Properties of the service, not of an environment: no request
+		// body here is larger than 1 MiB, no handler should run longer
+		// than this, and idle keep-alives from the proxy are bounded.
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 }
 

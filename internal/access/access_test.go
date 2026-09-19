@@ -20,7 +20,7 @@ func (f *fakeAccessStore) EffectivePermissions(_ context.Context, userID string)
 
 func TestPermissionsCacheHit(t *testing.T) {
 	store := &fakeAccessStore{perms: map[string][]string{"u1": {"gsh:orders.read"}}}
-	cache := NewPermissionsCache(store, time.Minute)
+	cache := NewPermissionsCache(store, time.Minute, 100)
 
 	for range 3 {
 		perms, err := cache.EffectivePermissions(t.Context(), "u1")
@@ -38,10 +38,10 @@ func TestPermissionsCacheHit(t *testing.T) {
 
 func TestPermissionsCacheExpiry(t *testing.T) {
 	store := &fakeAccessStore{perms: map[string][]string{"u1": {"gsh:orders.read", "gsh:orders.write"}}}
-	cache := NewPermissionsCache(store, time.Minute)
+	cache := NewPermissionsCache(store, time.Minute, 100)
 
 	current := time.Now()
-	cache.now = func() time.Time { return current }
+	cache.inner.SetClock(func() time.Time { return current })
 
 	if _, err := cache.EffectivePermissions(t.Context(), "u1"); err != nil {
 		t.Fatal(err)
