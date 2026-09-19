@@ -255,6 +255,22 @@ func TestSAMLAllowIDPInitiated(t *testing.T) {
 	}
 }
 
+func TestCacheMaxEntries(t *testing.T) {
+	cfg, err := Load()
+	if err != nil || cfg.CacheMaxEntries != DefaultCacheMaxEntries {
+		t.Fatalf("default = %d, %v", cfg.CacheMaxEntries, err)
+	}
+	t.Setenv(EnvCacheMaxEntries, "250")
+	cfg, err = Load()
+	if err != nil || cfg.CacheMaxEntries != 250 {
+		t.Errorf("CACHE_MAX_ENTRIES=250: %d, %v", cfg.CacheMaxEntries, err)
+	}
+	t.Setenv(EnvCacheMaxEntries, "0")
+	if _, err := Load(); err == nil {
+		t.Error("non-positive CACHE_MAX_ENTRIES must be rejected")
+	}
+}
+
 func TestRelayStateSecretStrengthOutsideDevelopment(t *testing.T) {
 	setProduction := func(t *testing.T, secret string) {
 		t.Helper()

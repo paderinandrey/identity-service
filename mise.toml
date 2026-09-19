@@ -1,6 +1,7 @@
 [tools]
 go = "1.27.1"
 golangci-lint = "2.13.2"
+tbls = "1.96.0"
 
 [tasks.build]
 description = "Build the service binary into bin/"
@@ -35,6 +36,14 @@ run = "./scripts/stand-verify.sh"
 [tasks."stand:down"]
 description = "Tear down the Kubernetes stand"
 run = "./scripts/stand-down.sh"
+
+[tasks."schema:docs"]
+description = "Regenerate docs/schema from the migrated local database (tbls)"
+run = ["go run ./cmd/identity-service migrate", "tbls doc --rm-dist"]
+
+[tasks."schema:check"]
+description = "Fail if docs/schema is stale against the migrated database (same check CI runs)"
+run = ["go run ./cmd/identity-service migrate", "tbls diff"]
 
 [tasks."chart:check"]
 description = "Helm chart lint and render checks (same script CI runs)"
