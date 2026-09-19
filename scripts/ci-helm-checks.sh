@@ -36,7 +36,20 @@ grep -A1 'configMapRef:' <<< "$out" | grep -q 'ci-identity-service-migrate' \
 has "serviceAccountName: ci-identity-service-migrate" || { echo "FAIL: Job миграций не использует хук-ServiceAccount"; exit 1; }
 has "kind: HTTPRoute" && { echo "FAIL: маршруты не должны рендериться без gateway.enabled"; exit 1; }
 has "component: postgresql" && { echo "FAIL: зависимости не должны рендериться в проде"; exit 1; }
-echo "PASS: Deployment и самодостаточный хук миграций есть, маршрутов и зависимостей нет"
+# Две зоны: Service и Deployment объявляют порт internal, NetworkPolicy
+# ограничивает оба порта и знает namespace прокси.
+has "kind: NetworkPolicy" || { echo "FAIL: нет NetworkPolicy"; exit 1; }
+has 'kubernetes.io/metadata.name: "envoy-gateway-system"' || { echo "FAIL: NetworkPolicy не ссылается на namespace gateway"; exit 1; }
+internal_ports=$(grep -c 'name: internal$' <<< "$out" || true)
+[ "$internal_ports" -ge 2 ] || { echo "FAIL: порт internal объявлен $internal_ports раз, ожидалось ≥2 (Service, Deployment)"; exit 1; }
+has "- port: internal" || { echo "FAIL: NetworkPolicy не ограничивает порт internal"; exit 1; }
+has "- port: http" || { echo "FAIL: NetworkPolicy не ограничивает порт http"; exit 1; }
+echo "PASS: Deployment и самодостаточный хук миграций есть, маршрутов и зависимостей нет, NetworkPolicy на обе зоны"
+
+echo "== рендер без NetworkPolicy"
+out=$(helm template ci "$CHART" --set networkPolicy.enabled=false)
+has "kind: NetworkPolicy" && { echo "FAIL: NetworkPolicy рендерится при networkPolicy.enabled=false"; exit 1; }
+echo "PASS: networkPolicy.enabled=false убирает ресурс"
 
 echo "== рендер с gateway, автоскейлом и мониторингом"
 out=$(helm template ci "$CHART" \
@@ -52,11 +65,22 @@ done
 # всегда 401, без headersToBackend контекст не доедет до upstream.
 has "headersToExtAuth" || { echo "FAIL: не пробрасывается cookie в ext-auth"; exit 1; }
 has "X-Identity-Permissions" || { echo "FAIL: не пробрасываются заголовки контекста"; exit 1; }
-echo "PASS: маршруты, политика ext-auth, HPA и ServiceMonitor на месте"
+# Внутренняя зона: ext-auth и скрейп идут на порт internal, а не на публичный.
+grep -A2 'backendRefs:' <<< "$out" | grep -q 'port: 8081' \
+  || { echo "FAIL: ext-auth не смотрит на внутренний порт 8081"; exit 1; }
+grep -A1 'endpoints:' <<< "$out" | grep -q 'port: internal' \
+  || { echo "FAIL: ServiceMonitor не скрейпит порт internal"; exit 1; }
+echo "PASS: маршруты, политика ext-auth и ServiceMonitor на внутреннем порту, HPA на месте"
 
 echo "== рендер оверлея стенда"
 out=$(helm template ci "$CHART" -f "$CHART/values-local.yaml")
 for component in postgresql redis rabbitmq keycloak echo stub-subgraph router; do
   has "component: $component" || { echo "FAIL: в стенде нет $component"; exit 1; }
 done
-echo "PASS: стенд рендерит все зависимости"
+# У echo-upstream стенда своя SecurityPolicy — она тоже обязана звать
+# ext-auth на внутренний порт: на публичном validate теперь 404, а Envoy
+# отдаёт клиенту код ответа auth-сервиса, и стенд ловил это как 404 вместо 403.
+out=$(helm template ci "$CHART" -f "$CHART/values-local.yaml" -s templates/debug-echo.yaml)
+has "port: 8081" || { echo "FAIL: ext-auth echo-политики не смотрит на внутренний порт"; exit 1; }
+has "port: 8080" && { echo "FAIL: echo-политика ссылается на публичный порт"; exit 1; }
+echo "PASS: стенд рендерит все зависимости, echo-политика на внутреннем порту"

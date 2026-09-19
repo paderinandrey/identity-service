@@ -87,10 +87,18 @@ func canonicalOrigin(raw string) (string, bool) {
 	return scheme + "://" + host, true
 }
 
-// Register mounts session routes; the mux must be wrapped with Middleware.
+// Register mounts the browser-facing routes on the public zone; the mux
+// must be wrapped with Middleware.
 func (h *Handlers) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/me", h.handleMe)
 	mux.HandleFunc("POST /auth/logout", h.handleLogout)
+}
+
+// RegisterInternal mounts the ext-auth validation route; the mux must be
+// wrapped with Middleware. It belongs to the internal zone only: mounting
+// it on the public listener would make the trusted-context contract
+// depend on routing alone.
+func (h *Handlers) RegisterInternal(mux *http.ServeMux) {
 	// The ext-auth contract shapes this route: Envoy mirrors the method of
 	// the original request (POST /graphql arrives here as POST) and treats
 	// the configured path as a prefix, appending the original path

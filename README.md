@@ -64,7 +64,7 @@ realm and point the service at it:
 
 ```bash
 mise run up-sso     # infrastructure + Keycloak on http://localhost:8081 (admin/admin)
-LISTEN_ADDR=":8080" SCIM_TOKEN="local-dev-scim-token-0123456789abcdef" SAML_IDP_METADATA_URL="http://localhost:8081/realms/identity/protocol/saml/descriptor"   mise run run
+LISTEN_ADDR=":8080" INTERNAL_LISTEN_ADDR=":8082" SCIM_TOKEN="local-dev-scim-token-0123456789abcdef" SAML_IDP_METADATA_URL="http://localhost:8081/realms/identity/protocol/saml/descriptor"   mise run run
 open http://localhost:8080/auth/saml/init   # sign in as qa@example.com / password
 ```
 
@@ -77,7 +77,8 @@ mirroring how Okta works in production — a SCIM outbound provider
 into the image in `dev/keycloak/Dockerfile`): any user created, updated or
 deactivated in Keycloak is pushed to this service over SCIM with the dev
 token above (hence `SCIM_TOKEN` and `LISTEN_ADDR=:8080` — the Keycloak
-container reaches the host via host.docker.internal). Create users in the
+container reaches the host via host.docker.internal; `INTERNAL_LISTEN_ADDR`
+moves off its default `:8081`, which compose gives to Keycloak). Create users in the
 Keycloak admin console (or the bundled qa user) — they appear here with an
 `okta` identity keyed by their Keycloak user id (the SCIM plugin sends it
 as `externalId`, the SAML client sends the same id as NameID) and a
@@ -102,7 +103,8 @@ in.
 
 | Variable | Default (development) | Description |
 | --- | --- | --- |
-| `LISTEN_ADDR` | `:8080` | HTTP listen address |
+| `LISTEN_ADDR` | `:8080` | Public zone: sign-in, provisioning, GraphQL, probes |
+| `INTERNAL_LISTEN_ADDR` | `:8081` | Internal zone: session validation for ext-auth, metrics, e2e login. Must differ from `LISTEN_ADDR` |
 | `APP_ENV` | `development` | One of `development`, `staging`, `production`. Must be set explicitly inside Kubernetes |
 | `LOG_LEVEL` | `info` | One of `debug`, `info`, `warn`, `error` |
 | `SHUTDOWN_TIMEOUT` | `10s` | Grace period for in-flight requests on shutdown |
@@ -144,8 +146,16 @@ with a non-zero exit code.
 - `GET /internal/session/validate` — for the entry proxy (ext-auth): 200 with
   `X-Identity-User-Id`, `X-Identity-Email` and `X-Identity-Permissions`
   (comma-separated `app:permission`, empty when the user has no roles) headers,
-  401, or 503 (fail-close). Must not be exposed publicly. The permissions
-  header is an interim contract until a signed internal token is chosen.
+  401, or 503 (fail-close). The permissions header is an interim contract
+  until a signed internal token is chosen.
+
+Everything under `/internal/` — validation, `/internal/metrics`, the e2e
+login — is served **only on the internal listener** (`INTERNAL_LISTEN_ADDR`);
+on the public port those paths are a 404 by construction, not by routing.
+The proxy overwrites any client-supplied `X-Identity-*` header with the
+validation response (an empty permissions header included), so upstreams
+never see a forged context; the chart's NetworkPolicy keeps the internal
+port reachable only from the proxy, monitoring and explicitly listed peers.
 
 ## Access control
 
@@ -281,7 +291,10 @@ issues a regular session for an existing active user.
 
 ```ts
 // playwright global-setup.ts — once per role
-const resp = await request.post(`${BASE_URL}/internal/e2e/login`, {
+// INTERNAL_URL points at the internal listener (INTERNAL_LISTEN_ADDR):
+// the route does not exist on the public port, and the NetworkPolicy
+// must list the test runner as an allowed peer.
+const resp = await request.post(`${INTERNAL_URL}/internal/e2e/login`, {
   headers: { Authorization: `Bearer ${process.env.E2E_LOGIN_TOKEN}` },
   data: { email: 'qa@example.com' },
 });
@@ -310,8 +323,9 @@ Two notes for the suites:
   records and handler panics are additionally reported to Sentry as issues
   (environment = `APP_ENV`); panics always return 500 and never kill the
   process.
-- `GET /internal/metrics` serves Prometheus metrics (internal zone, same as
-  the validate endpoint): standard Go/process collectors,
+- `GET /internal/metrics` serves Prometheus metrics on the internal
+  listener (`INTERNAL_LISTEN_ADDR`, same zone as validate; the
+  ServiceMonitor scrapes the `internal` Service port): standard Go/process collectors,
   `http_request_duration_seconds` / `http_requests_total` by route pattern,
   `outbox_pending` / `events_published_total` / `event_publish_errors_total`,
   `sign_ins_total{result}`, `scim_operations_total{op}`,
@@ -356,6 +370,25 @@ protected) and an Envoy Gateway `SecurityPolicy` whose ext-auth calls this
 service's own `/internal/session/validate` and forwards the
 `X-Identity-*` context headers upstream. Internal paths are deliberately
 not routed from outside.
+
+The Service exposes two named ports, `http` (public zone) and `internal`
+(validation, metrics, e2e login); the ext-auth SecurityPolicy and the
+ServiceMonitor use `internal`, HTTPRoutes only ever use `http`. A
+**NetworkPolicy** (`networkPolicy.enabled`, on by default; ingress only)
+admits the proxy namespace (`networkPolicy.gatewayNamespace`) to both
+ports, the monitoring namespace to `internal`, and whatever is listed in
+`networkPolicy.public.extraFrom` / `internal.extraFrom`. **Put the GraphQL
+Router into `public.extraFrom`** in the per-environment values — the
+router calls this subgraph directly, and without that peer federation
+stops at once. Egress is not restricted: dependency addresses belong to
+the environment. On a CNI without NetworkPolicy enforcement the policy is
+inert; the stand (k3s under OrbStack) enforces it and `stand:verify`
+proves both the isolation and the header overwrite.
+
+Changing either port on a running environment needs two releases: first
+an image that serves the zone on both the old and the new port, then the
+chart switch of SecurityPolicy/ServiceMonitor — a single release would
+point ext-auth at old pods that do not listen there yet.
 
 ```bash
 mise run chart:check   # lint + render checks (the same script CI runs)
@@ -409,7 +442,20 @@ each discovered only by wiring a real proxy:
   original path (`/internal/session/validate/graphql`);
 - Envoy sends the auth service only a small default header set — the
   session **cookie** must be listed in `headersToExtAuth`, otherwise
-  validate never sees a session and denies everything.
+  validate never sees a session and denies everything;
+- headers listed in `headersToBackend` **replace** the client's
+  same-named headers, an empty value included — `stand:verify` sends
+  forged `x-identity-*` headers with a valid session and checks the echo
+  upstream saw the session's id and an empty permissions header (the qa
+  user has no roles, which is exactly the case where "add if missing"
+  semantics would leak a forged value).
+
+Steps 11–13 cover the internal zone: `/internal/*` is a 404 on the public
+port, the internal port refuses a pod outside the policy and serves a
+labeled one, and the forged-header check above. The probe pods are
+long-lived (`sleep` + `kubectl exec`): the stand CNI adds a new pod to
+the policy's peer set asynchronously, so a one-shot `kubectl run -i` with
+the right labels was refused before its address was known.
 
 Cookie-authenticated **mutations** are checked for a trusted `Origin`
 (base and frontend URLs, the same rule as logout); a request without an
@@ -429,7 +475,7 @@ context onward. A subgraph referencing our user must declare
 
 ```bash
 docker build -t identity-service .
-docker run --rm -p 8080:8080 identity-service            # serve
+docker run --rm -p 8080:8080 -p 8081:8081 identity-service   # serve (public + internal zone)
 docker run --rm identity-service migrate                 # init container
 ```
 

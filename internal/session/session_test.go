@@ -95,7 +95,11 @@ func newEnv(t *testing.T, redisClient *redis.Client, cfg Config) *env {
 	}
 
 	mux := http.NewServeMux()
-	NewHandlers(manager, users, []string{"http://app.example.com"}).Register(mux)
+	// One mux for both zones: the zone split is the HTTP server's job
+	// (tested in httpserver); these tests cover the handlers themselves.
+	handlers := NewHandlers(manager, users, []string{"http://app.example.com"})
+	handlers.Register(mux)
+	handlers.RegisterInternal(mux)
 	mux.HandleFunc("POST /test/login", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("user")
 		var epoch int64

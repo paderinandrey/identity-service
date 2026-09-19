@@ -308,3 +308,44 @@ func TestAppEnvMustBeExplicitInKubernetes(t *testing.T) {
 		t.Errorf("explicit development inside Kubernetes must pass: %v", err)
 	}
 }
+
+func TestInternalListenAddr(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		t.Setenv(EnvInternalListenAddr, "")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.InternalListenAddr != DefaultInternalListenAddr {
+			t.Errorf("InternalListenAddr = %q, want %q", cfg.InternalListenAddr, DefaultInternalListenAddr)
+		}
+	})
+
+	t.Run("override", func(t *testing.T) {
+		t.Setenv(EnvInternalListenAddr, "127.0.0.1:9091")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.InternalListenAddr != "127.0.0.1:9091" {
+			t.Errorf("InternalListenAddr = %q", cfg.InternalListenAddr)
+		}
+	})
+
+	// The two zones exist to be told apart by port; one address for both
+	// would silently merge them, so it is a configuration error with a
+	// message naming both variables — not a bind failure later.
+	t.Run("same as public", func(t *testing.T) {
+		t.Setenv(EnvListenAddr, ":9090")
+		t.Setenv(EnvInternalListenAddr, ":9090")
+		_, err := Load()
+		if err == nil {
+			t.Fatal("Load() with equal listen addresses: want error, got nil")
+		}
+		for _, name := range []string{EnvListenAddr, EnvInternalListenAddr} {
+			if !strings.Contains(err.Error(), name) {
+				t.Errorf("error must name %s, got: %v", name, err)
+			}
+		}
+	})
+}

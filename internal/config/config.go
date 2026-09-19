@@ -12,10 +12,11 @@ import (
 
 // Environment variable names.
 const (
-	EnvListenAddr      = "LISTEN_ADDR"
-	EnvAppEnv          = "APP_ENV"
-	EnvLogLevel        = "LOG_LEVEL"
-	EnvShutdownTimeout = "SHUTDOWN_TIMEOUT"
+	EnvListenAddr         = "LISTEN_ADDR"
+	EnvInternalListenAddr = "INTERNAL_LISTEN_ADDR"
+	EnvAppEnv             = "APP_ENV"
+	EnvLogLevel           = "LOG_LEVEL"
+	EnvShutdownTimeout    = "SHUTDOWN_TIMEOUT"
 
 	EnvDatabaseURL           = "DATABASE_URL"
 	EnvRedisURL              = "REDIS_URL"
@@ -40,10 +41,11 @@ const (
 
 // Defaults are safe for local development only.
 const (
-	DefaultListenAddr      = ":8080"
-	DefaultAppEnv          = "development"
-	DefaultLogLevel        = slog.LevelInfo
-	DefaultShutdownTimeout = 10 * time.Second
+	DefaultListenAddr         = ":8080"
+	DefaultInternalListenAddr = ":8081"
+	DefaultAppEnv             = "development"
+	DefaultLogLevel           = slog.LevelInfo
+	DefaultShutdownTimeout    = 10 * time.Second
 
 	DefaultDatabaseURL           = "postgres://identity:identity@localhost:5433/identity_development?sslmode=disable"
 	DefaultRedisURL              = "redis://localhost:6380/0"
@@ -72,10 +74,15 @@ var validAppEnvs = map[string]bool{
 
 // Config holds the runtime configuration of the service.
 type Config struct {
-	ListenAddr      string
-	AppEnv          string
-	LogLevel        slog.Level
-	ShutdownTimeout time.Duration
+	// ListenAddr serves the public zone (sign-in, provisioning, GraphQL,
+	// probes); InternalListenAddr serves the cluster-only zone (session
+	// validation for ext-auth, metrics, e2e login). Different ports so
+	// the Service and NetworkPolicy can tell them apart.
+	ListenAddr         string
+	InternalListenAddr string
+	AppEnv             string
+	LogLevel           slog.Level
+	ShutdownTimeout    time.Duration
 
 	DatabaseURL        string
 	RedisURL           string
@@ -119,10 +126,11 @@ func (c Config) IsDevelopment() bool { return c.AppEnv == "development" }
 // connection strings, URLs and secrets are required. Invalid values are an error.
 func Load() (Config, error) {
 	cfg := Config{
-		ListenAddr:      DefaultListenAddr,
-		AppEnv:          DefaultAppEnv,
-		LogLevel:        DefaultLogLevel,
-		ShutdownTimeout: DefaultShutdownTimeout,
+		ListenAddr:         DefaultListenAddr,
+		InternalListenAddr: DefaultInternalListenAddr,
+		AppEnv:             DefaultAppEnv,
+		LogLevel:           DefaultLogLevel,
+		ShutdownTimeout:    DefaultShutdownTimeout,
 
 		SessionCookieName:     DefaultSessionCookieName,
 		SessionIdleTimeout:    DefaultSessionIdleTimeout,
@@ -135,6 +143,12 @@ func Load() (Config, error) {
 
 	if v := os.Getenv(EnvListenAddr); v != "" {
 		cfg.ListenAddr = v
+	}
+	if v := os.Getenv(EnvInternalListenAddr); v != "" {
+		cfg.InternalListenAddr = v
+	}
+	if cfg.InternalListenAddr == cfg.ListenAddr {
+		return Config{}, fmt.Errorf("%s and %s must differ (got %q for both): the internal zone is told apart by port", EnvListenAddr, EnvInternalListenAddr, cfg.ListenAddr)
 	}
 
 	if v := os.Getenv(EnvAppEnv); v != "" {
