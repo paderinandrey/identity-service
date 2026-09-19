@@ -56,7 +56,7 @@ echo "PASS: маршруты, политика ext-auth, HPA и ServiceMonitor �
 
 echo "== рендер оверлея стенда"
 out=$(helm template ci "$CHART" -f "$CHART/values-local.yaml")
-for component in postgresql redis rabbitmq keycloak echo stub-subgraph router; do
+for component in postgresql redis rabbitmq keycloak echo stub-subgraph stub-consumer router; do
   has "component: $component" || { echo "FAIL: в стенде нет $component"; exit 1; }
 done
 echo "PASS: стенд рендерит все зависимости"

@@ -63,7 +63,73 @@ listed=$(curl -s "${RESOLVE[@]}" -H "Authorization: Bearer $SCIM_TOKEN" \
 grep -q "\"externalId\":\"$KC_USER_ID\"" <<< "$listed" || fail "SCIM не вернул externalId = $KC_USER_ID: $listed"
 pass "пользователь $USER_EMAIL заведён, externalId = id в Keycloak ($KC_USER_ID)"
 
-step "5. Вход через форму Keycloak (полный SAML-цикл)"
+step "5. Проекция консьюмера: replay, живое изменение, повторный replay"
+# Референсный консьюмер (dev/stub-consumer) — образец поведения для
+# GSH/DFM. Его проекция читается через port-forward: он внутри кластера.
+CONSUMER_PORT=18090
+kubectl port-forward -n "$NS" "svc/$RELEASE-identity-service-stub-consumer" "$CONSUMER_PORT:8080" >/dev/null 2>&1 &
+PF_PID=$!
+trap 'kill $PF_PID 2>/dev/null; rm -f "$COOKIE_JAR"' EXIT
+sleep 2
+consumer() { curl -s --max-time 5 "http://127.0.0.1:$CONSUMER_PORT$1"; }
+replay() {
+  kubectl run "replay-$RANDOM" -n "$NS" --rm -i --restart=Never --quiet \
+    --image=identity-service:dev --image-pull-policy=Never \
+    --overrides="{\"spec\":{\"containers\":[{\"name\":\"cli\",\"image\":\"identity-service:dev\",\"imagePullPolicy\":\"Never\",\"args\":[\"replay-users\"],\"envFrom\":[{\"configMapRef\":{\"name\":\"$RELEASE-identity-service\"}}]}]}}" 2>/dev/null | tail -1
+}
+# Эталон — база: каждый пользователь с его текущей версией.
+db_users() {
+  kubectl exec -n "$NS" "deploy/$RELEASE-identity-service-postgresql" -- \
+    psql -U identity -d identity_development -tAc "SELECT id || ':' || version FROM users ORDER BY id" 2>/dev/null | tr -d ' '
+}
+projection_users() {
+  local tmp; tmp=$(mktemp)
+  consumer /projection > "$tmp"
+  python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print('\n'.join(u['id']+':'+str(u['version']) for u in sorted(d['users'], key=lambda u: u['id'])))" "$tmp"
+  rm -f "$tmp"
+}
+expected=$(db_users)
+[ -n "$expected" ] || fail "в базе нет пользователей"
+out=$(replay); grep -q "snapshot event(s) enqueued" <<< "$out" || fail "replay-users не отработал: $out"
+for _ in $(seq 1 30); do [ "$(projection_users)" = "$expected" ] && break; sleep 1; done
+[ "$(projection_users)" = "$expected" ] || fail "после replay проекция $(projection_users | tr '\n' ' ') != база $(echo "$expected" | tr '\n' ' ')"
+n_users=$(wc -l <<< "$expected" | tr -d ' ')
+pass "replay на пустую проекцию: $n_users пользователь(ей) с версиями из базы"
+
+# Живое изменение: SCIM PATCH имени доходит до проекции с версией +1.
+scim_id=$(curl -s "${RESOLVE[@]}" -H "Authorization: Bearer $SCIM_TOKEN" \
+  "http://$HOST/scim/v2/Users?filter=userName%20eq%20%22$USER_EMAIL%22" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["Resources"][0]["id"])')
+before_version=$(consumer "/projection/$scim_id" | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
+new_name="QA User $RANDOM"
+code=$(curl -s "${RESOLVE[@]}" -o /dev/null -w '%{http_code}' -X PATCH -H "Authorization: Bearer $SCIM_TOKEN" \
+  -H 'Content-Type: application/scim+json' "http://$HOST/scim/v2/Users/$scim_id" \
+  -d "{\"schemas\":[\"urn:ietf:params:scim:api:messages:2.0:PatchOp\"],\"Operations\":[{\"op\":\"replace\",\"value\":{\"displayName\":\"$new_name\"}}]}")
+[ "$code" = 200 ] || fail "SCIM PATCH имени -> $code"
+for _ in $(seq 1 30); do
+  projected=$(consumer "/projection/$scim_id")
+  grep -q "\"name\":\"$new_name\"" <<< "$projected" && break
+  sleep 1
+done
+grep -q "\"name\":\"$new_name\"" <<< "$projected" || fail "изменение имени не дошло до проекции: $projected"
+after_version=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])' <<< "$projected")
+[ "$after_version" = "$((before_version + 1))" ] || fail "версия в проекции $after_version, ожидалась $((before_version + 1))"
+pass "SCIM-изменение имени в проекции с версией $after_version (было $before_version)"
+
+# Повторный replay: те же версии — stale, проекция не меняется.
+stale_before=$(consumer /stats | python3 -c 'import json,sys; print(json.load(sys.stdin)["stale"])')
+snapshot=$(projection_users)
+replay >/dev/null
+for _ in $(seq 1 30); do
+  stale_now=$(consumer /stats | python3 -c 'import json,sys; print(json.load(sys.stdin)["stale"])')
+  [ "$stale_now" -ge $((stale_before + n_users)) ] && break
+  sleep 1
+done
+[ "$stale_now" -ge $((stale_before + n_users)) ] || fail "повторный replay: stale=$stale_now, ожидалось >= $((stale_before + n_users))"
+[ "$(projection_users)" = "$snapshot" ] || fail "повторный replay изменил проекцию"
+pass "повторный replay: $((stale_now - stale_before)) snapshot'ов отброшены как stale, проекция без изменений"
+
+step "6. Вход через форму Keycloak (полный SAML-цикл)"
 # curl отбрасывает Secure-куки Keycloak по http, а браузер на *.localhost
 # их принимает (loopback — secure context). Helper воспроизводит именно
 # браузерное поведение, поэтому проверяется настоящий путь пользователя.
@@ -72,14 +138,14 @@ SESSION=$(./scripts/stand-login.py "$HOST" "$USER_EMAIL" password /debug/echo 2>
 pass "$(cat /tmp/stand-login.err)"
 COOKIE=(-b "__identity_session=$SESSION")
 
-step "6. Subject входа — стабильный id IdP, а не email"
+step "7. Subject входа — стабильный id IdP, а не email"
 subject=$(kubectl exec -n "$NS" "deploy/$RELEASE-identity-service-postgresql" -- \
   psql -U identity -d identity_development -tAc \
   "SELECT i.subject FROM user_identities i JOIN users u ON u.id = i.user_id WHERE u.email = '$USER_EMAIL' AND i.provider = 'okta'" 2>/dev/null | tr -d '[:space:]')
 [ "$subject" = "$KC_USER_ID" ] || fail "привязка okta: subject=$subject, ожидался id из Keycloak $KC_USER_ID"
 pass "привязка okta: subject = $subject = persistent NameID = SCIM externalId; email не участвует"
 
-step "7. Заголовки контекста доходят до защищённого upstream"
+step "8. Заголовки контекста доходят до защищённого upstream"
 echoed=$(curl -s "${RESOLVE[@]}" "${COOKIE[@]}" "http://$HOST/debug/echo")
 for header in x-identity-user-id x-identity-email; do
   grep -qi "$header" <<< "$echoed" || fail "upstream не увидел $header"
@@ -88,12 +154,12 @@ uid=$(echo "$echoed" | tr ',' '\n' | grep -i 'x-identity-user-id' | head -1)
 mail=$(echo "$echoed" | tr ',' '\n' | grep -i 'x-identity-email' | head -1)
 pass "upstream получил: $uid $mail"
 
-step "8. /auth/me через proxy"
+step "9. /auth/me через proxy"
 me=$(curl -s "${RESOLVE[@]}" "${COOKIE[@]}" "http://$HOST/auth/me")
 grep -q "$USER_EMAIL" <<< "$me" || fail "/auth/me вернул: $me"
 pass "/auth/me -> $me"
 
-step "9. Федерация: запрос через router в оба сабграфа"
+step "10. Федерация: запрос через router в оба сабграфа"
 fed=$(curl -s "${RESOLVE[@]}" "${COOKIE[@]}" -X POST "http://$HOST/graphql" \
   -H 'Content-Type: application/json' \
   -d '{"query":"{ orders { id seenIdentityHeaders owner { id email } } }"}')
@@ -101,13 +167,13 @@ grep -q '"x-identity-user-id=' <<< "$fed" || fail "сабграф не полу�
 grep -q "$USER_EMAIL" <<< "$fed" || fail "federation-ссылка owner -> User не разрешилась: $fed"
 pass "router собрал ответ из двух сабграфов; стаб получил контекст, owner разрешён в identity"
 
-step "10. Аноним не доходит до router"
+step "11. Аноним не доходит до router"
 code=$(curl -s -o /dev/null -w '%{http_code}' "${RESOLVE[@]}" -X POST "http://$HOST/graphql" \
   -H 'Content-Type: application/json' -d '{"query":"{ __schema { types { name } } }"}')
 [ "$code" = 401 ] || [ "$code" = 403 ] || fail "анонимная introspection -> $code, ожидался отказ"
 pass "анонимная introspection -> $code (схема не раскрывается)"
 
-step "11. Первая установка чарта: хук миграций в пустом namespace"
+step "12. Первая установка чарта: хук миграций в пустом namespace"
 # Стенд держит зависимости в том же релизе и хук там выключен; здесь чарт
 # ставится как в проде — в пустой namespace, с внешней базой (отдельная БД
 # в PostgreSQL стенда) — и хук обязан отработать сам, без ресурсов релиза.
@@ -124,7 +190,7 @@ probe_cleanup
 kubectl delete namespace "$PROBE_NS" --ignore-not-found --wait=true >/dev/null 2>&1 || true
 # Уборка — в EXIT-trap до создания первого ресурса: любой fail, set -e или
 # прерывание иначе оставили бы БД, namespace и релиз (ревью Codex, PR #4).
-trap 'probe_cleanup; rm -f "$COOKIE_JAR"' EXIT
+trap 'probe_cleanup; kill $PF_PID 2>/dev/null; rm -f "$COOKIE_JAR"' EXIT
 probe_psql identity_development "CREATE DATABASE $PROBE_DB" >/dev/null || fail "не удалось создать БД $PROBE_DB"
 kubectl create namespace "$PROBE_NS" >/dev/null
 kubectl create secret generic hook-probe-secret -n "$PROBE_NS" \
@@ -154,6 +220,6 @@ jobs_created=$(kubectl get events -n "$PROBE_NS" --field-selector reason=Success
 [ "$revision" = 2 ] && [ "$jobs_created" -ge 2 ] || fail "upgrade: revision=$revision, запусков Job миграций=$jobs_created"
 pass "helm upgrade: revision 2, хук миграций отработал повторно"
 probe_cleanup
-trap 'rm -f "$COOKIE_JAR"' EXIT
+trap 'kill $PF_PID 2>/dev/null; rm -f "$COOKIE_JAR"' EXIT
 
 printf '\nСТЕНД ПРОВЕРЕН ЦЕЛИКОМ\n' 
