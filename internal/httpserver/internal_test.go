@@ -58,29 +58,68 @@ func TestNoInternalZoneByDefault(t *testing.T) {
 
 func freeAddr(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	return freeAddrs(t, 1)[0]
+}
+
+// freeAddrs reserves n distinct loopback addresses. All listeners are
+// held open until every port is known: closing one before opening the
+// next let the kernel hand the same port out twice, so the public and
+// internal zones collided on CI and Run failed to bind instead of
+// serving.
+func freeAddrs(t *testing.T, n int) []string {
+	t.Helper()
+	listeners := make([]net.Listener, 0, n)
+	addrs := make([]string, 0, n)
+	for range n {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		listeners = append(listeners, ln)
+		addrs = append(addrs, ln.Addr().String())
 	}
-	addr := ln.Addr().String()
-	if err := ln.Close(); err != nil {
-		t.Fatal(err)
+	for _, ln := range listeners {
+		if err := ln.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
-	return addr
+	return addrs
+}
+
+// startRun runs the server in the background and fails the test at once
+// if Run returns before the test expected it to, naming the real error
+// instead of leaving a later "server did not come up".
+func startRun(ctx context.Context, t *testing.T, srv *Server) chan error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- srv.Run(ctx) }()
+	return done
+}
+
+// waitForRunning is waitFor that also watches the Run result, so a bind
+// failure is reported as such.
+func waitForRunning(t *testing.T, done chan error, url string, want int) {
+	t.Helper()
+	select {
+	case err := <-done:
+		t.Fatalf("Run() returned early: %v", err)
+	default:
+	}
+	waitFor(t, url, want)
 }
 
 // Both listeners come up before readiness and go down together on
 // shutdown, within the single configured timeout.
 func TestRunBothZonesLifecycle(t *testing.T) {
-	publicAddr, internalAddr := freeAddr(t), freeAddr(t)
+	addrs := freeAddrs(t, 2)
+	publicAddr, internalAddr := addrs[0], addrs[1]
 	srv := newZonedServer(publicAddr, internalAddr)
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- srv.Run(ctx) }()
+	done := startRun(ctx, t, srv)
 
-	waitFor(t, "http://"+publicAddr+"/readyz", http.StatusOK)
-	waitFor(t, "http://"+internalAddr+"/internal/session/validate", http.StatusOK)
-	waitFor(t, "http://"+publicAddr+"/internal/session/validate", http.StatusNotFound)
+	waitForRunning(t, done, "http://"+publicAddr+"/readyz", http.StatusOK)
+	waitForRunning(t, done, "http://"+internalAddr+"/internal/session/validate", http.StatusOK)
+	waitForRunning(t, done, "http://"+publicAddr+"/internal/session/validate", http.StatusNotFound)
 
 	cancel()
 	select {
@@ -139,7 +178,8 @@ func TestRunFailsWhenInternalAddrBusy(t *testing.T) {
 // connections instead of admitting ext-auth calls into a shrinking
 // deadline (Codex review, PR #11).
 func TestShutdownClosesBothListenersConcurrently(t *testing.T) {
-	publicAddr, internalAddr := freeAddr(t), freeAddr(t)
+	addrs := freeAddrs(t, 2)
+	publicAddr, internalAddr := addrs[0], addrs[1]
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -154,9 +194,8 @@ func TestShutdownClosesBothListenersConcurrently(t *testing.T) {
 		WithInternal(internalAddr, func(mux *http.ServeMux) { mux.HandleFunc("/internal/session/validate", ok) }),
 	)
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- srv.Run(ctx) }()
-	waitFor(t, "http://"+internalAddr+"/internal/session/validate", http.StatusOK)
+	done := startRun(ctx, t, srv)
+	waitForRunning(t, done, "http://"+internalAddr+"/internal/session/validate", http.StatusOK)
 
 	slowDone := make(chan error, 1)
 	go func() {
