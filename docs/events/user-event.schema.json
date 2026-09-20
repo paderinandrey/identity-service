@@ -13,14 +13,9 @@
       "description": "Stable event id; equals the AMQP message_id. Deduplicate by it."
     },
     "type": {
-      "enum": [
-        "identity.user.created",
-        "identity.user.updated",
-        "identity.user.deactivated",
-        "identity.user.reactivated",
-        "identity.user.snapshot"
-      ],
-      "description": "Event type; equals the AMQP type property. The routing key is the type without the identity. prefix."
+      "type": "string",
+      "pattern": "^identity\\.user\\.[a-z]+$",
+      "description": "Event type; equals the AMQP type property. The routing key is the type without the identity. prefix. Known values: identity.user.created, updated, deactivated, reactivated, snapshot. Deliberately not an enum: a consumer must apply an unknown type as a snapshot, so the schema must not reject one."
     },
     "schemaVersion": {
       "const": 1,

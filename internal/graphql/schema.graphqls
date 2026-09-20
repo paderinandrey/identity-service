@@ -39,6 +39,20 @@ type Role {
   permissions: [String!]!
 }
 
+"""
+A page of users. Cursors are opaque; pass endCursor as `after` for the
+next page.
+"""
+type UserConnection {
+  nodes: [User!]!
+  pageInfo: PageInfo!
+}
+
+type PageInfo {
+  endCursor: String
+  hasNextPage: Boolean!
+}
+
 type AuditEntry {
   id: ID!
   actor: String!
@@ -51,8 +65,11 @@ type AuditEntry {
 
 type Query {
   me: Me!
-  "Active users matching search; includeInactive adds deactivated ones."
-  users(search: String, includeInactive: Boolean! = false): [User!]!
+  """
+  Active users matching search, paged by keyset cursor; includeInactive
+  adds deactivated ones. first is capped at 200.
+  """
+  users(search: String, includeInactive: Boolean! = false, first: Int! = 50, after: String): UserConnection!
   user(id: ID!): User
   applications: [Application!]!
   "Requires identity:access.manage."

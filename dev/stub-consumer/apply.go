@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -78,11 +79,39 @@ const schemaVersion = 1
 
 var errInvalid = errors.New("invalid event")
 
+// requiredFields mirrors the "required" lists of the published schema.
+// Presence is checked on the raw JSON: a missing boolean would otherwise
+// decode as false and deactivate the projected user (Codex review, PR #12).
+var (
+	requiredTop  = []string{"id", "type", "schemaVersion", "occurredAt", "user"}
+	requiredUser = []string{"id", "email", "name", "active", "version"}
+)
+
 // parse decodes and validates a body against the contract's invariants.
-// The type is deliberately not validated: an unknown type is still a
-// full snapshot and is applied like any other (compatibility rule).
+// The type is validated for shape only: an unknown type is still a full
+// snapshot and is applied like any other (compatibility rule).
 func parse(body []byte) (Event, error) {
 	var ev Event
+	var raw struct {
+		Fields map[string]json.RawMessage `json:"-"`
+	}
+	if err := json.Unmarshal(body, &raw.Fields); err != nil {
+		return ev, err
+	}
+	for _, f := range requiredTop {
+		if _, ok := raw.Fields[f]; !ok {
+			return ev, errors.Join(errInvalid, errors.New("missing field "+f))
+		}
+	}
+	var user map[string]json.RawMessage
+	if err := json.Unmarshal(raw.Fields["user"], &user); err != nil {
+		return ev, errors.Join(errInvalid, err)
+	}
+	for _, f := range requiredUser {
+		if _, ok := user[f]; !ok {
+			return ev, errors.Join(errInvalid, errors.New("missing field user."+f))
+		}
+	}
 	if err := json.Unmarshal(body, &ev); err != nil {
 		return ev, err
 	}
@@ -90,7 +119,9 @@ func parse(body []byte) (Event, error) {
 	case ev.SchemaVersion != schemaVersion:
 		return ev, errors.Join(errInvalid, errors.New("unknown schemaVersion"))
 	case ev.ID == "", ev.User.ID == "", ev.User.Email == "":
-		return ev, errors.Join(errInvalid, errors.New("missing id, user.id or user.email"))
+		return ev, errors.Join(errInvalid, errors.New("empty id, user.id or user.email"))
+	case !strings.HasPrefix(ev.Type, "identity.user."):
+		return ev, errors.Join(errInvalid, errors.New("type outside identity.user.*"))
 	case ev.User.Version < 1:
 		return ev, errors.Join(errInvalid, errors.New("user.version must be >= 1"))
 	}

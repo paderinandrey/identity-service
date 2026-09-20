@@ -66,6 +66,10 @@ pass "пользователь $USER_EMAIL заведён, externalId = id в Ke
 step "5. Проекция консьюмера: replay, живое изменение, повторный replay"
 # Референсный консьюмер (dev/stub-consumer) — образец поведения для
 # GSH/DFM. Его проекция читается через port-forward: он внутри кластера.
+# Проекция живёт в памяти: рестарт консьюмера даёт пустую проекцию,
+# без него replay проверялся бы поверх уже принятых живых событий.
+kubectl rollout restart "deploy/$RELEASE-identity-service-stub-consumer" -n "$NS" >/dev/null
+kubectl rollout status "deploy/$RELEASE-identity-service-stub-consumer" -n "$NS" --timeout=120s >/dev/null
 CONSUMER_PORT=18090
 kubectl port-forward -n "$NS" "svc/$RELEASE-identity-service-stub-consumer" "$CONSUMER_PORT:8080" >/dev/null 2>&1 &
 PF_PID=$!
@@ -90,6 +94,7 @@ projection_users() {
 }
 expected=$(db_users)
 [ -n "$expected" ] || fail "в базе нет пользователей"
+[ -z "$(projection_users)" ] || fail "проекция не пуста после рестарта консьюмера: $(projection_users | tr '\n' ' ')"
 out=$(replay); grep -q "snapshot event(s) enqueued" <<< "$out" || fail "replay-users не отработал: $out"
 for _ in $(seq 1 30); do [ "$(projection_users)" = "$expected" ] && break; sleep 1; done
 [ "$(projection_users)" = "$expected" ] || fail "после replay проекция $(projection_users | tr '\n' ' ') != база $(echo "$expected" | tr '\n' ' ')"
@@ -128,6 +133,23 @@ done
 [ "$stale_now" -ge $((stale_before + n_users)) ] || fail "повторный replay: stale=$stale_now, ожидалось >= $((stale_before + n_users))"
 [ "$(projection_users)" = "$snapshot" ] || fail "повторный replay изменил проекцию"
 pass "повторный replay: $((stale_now - stale_before)) snapshot'ов отброшены как stale, проекция без изменений"
+
+# Мусор уходит в DLQ консьюмера, а не исчезает: публикуем в exchange тело,
+# которое не разобрать, и ждём его в очереди .dlq.
+rejected_before=$(consumer /stats | python3 -c 'import json,sys; print(json.load(sys.stdin)["rejected"])')
+kubectl exec -n "$NS" "deploy/$RELEASE-identity-service-rabbitmq" -- rabbitmqadmin --non-interactive \
+  --username identity --password identity publish message \
+  --exchange identity.events --routing-key user.updated --payload '{"not":"an event"}' >/dev/null 2>&1 \
+  || fail "не удалось опубликовать тестовое сообщение через rabbitmqadmin"
+for _ in $(seq 1 20); do
+  dlq=$(kubectl exec -n "$NS" "deploy/$RELEASE-identity-service-rabbitmq" -- rabbitmqctl list_queues name messages 2>/dev/null | awk '$1=="stub-consumer.users.dlq"{print $2}')
+  [ "${dlq:-0}" -ge 1 ] && break
+  sleep 1
+done
+[ "${dlq:-0}" -ge 1 ] || fail "неразбираемое сообщение не попало в DLQ"
+rejected_now=$(consumer /stats | python3 -c 'import json,sys; print(json.load(sys.stdin)["rejected"])')
+[ "$rejected_now" = "$((rejected_before + 1))" ] || fail "rejected=$rejected_now, ожидалось $((rejected_before + 1))"
+pass "неразбираемое тело: rejected +1, сообщение лежит в stub-consumer.users.dlq ($dlq)"
 
 step "6. Вход через форму Keycloak (полный SAML-цикл)"
 # curl отбрасывает Secure-куки Keycloak по http, а браузер на *.localhost
@@ -173,7 +195,54 @@ code=$(curl -s -o /dev/null -w '%{http_code}' "${RESOLVE[@]}" -X POST "http://$H
 [ "$code" = 401 ] || [ "$code" = 403 ] || fail "анонимная introspection -> $code, ожидался отказ"
 pass "анонимная introspection -> $code (схема не раскрывается)"
 
-step "12. Первая установка чарта: хук миграций в пустом namespace"
+# Два пода в namespace стенда: с метками разрешённого источника и без
+# меток — как любой чужой под. Долгоживущие, а не `kubectl run -i`: CNI
+# добавляет адрес нового пода в набор политики асинхронно, одноразовый
+# под стреляет раньше и получает отказ при верных метках; после Ready
+# адрес учтён. Печатают HTTP-код, 000 — соединения нет.
+PROBE_ALLOWED="probe-allowed-$RANDOM"
+PROBE_PLAIN="probe-plain-$RANDOM"
+probe_cleanup_pods() { kubectl delete pod -n "$NS" "$PROBE_ALLOWED" "$PROBE_PLAIN" --ignore-not-found --wait=false >/dev/null 2>&1 || true; }
+trap 'probe_cleanup_pods; kill $PF_PID 2>/dev/null; rm -f "$COOKIE_JAR"' EXIT
+kubectl run "$PROBE_ALLOWED" -n "$NS" --restart=Never --image=curlimages/curl:latest \
+  --labels=identity-stand/tools=true,app.kubernetes.io/component=router --command -- sleep 600 >/dev/null
+kubectl run "$PROBE_PLAIN" -n "$NS" --restart=Never --image=curlimages/curl:latest --command -- sleep 600 >/dev/null
+kubectl wait pod/"$PROBE_ALLOWED" pod/"$PROBE_PLAIN" -n "$NS" --for=condition=Ready --timeout=60s >/dev/null
+probe_curl() { kubectl exec -n "$NS" "$1" -- curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$2" 2>/dev/null || true; }
+SVC="http://$RELEASE-identity-service"
+
+step "12. Внутренняя зона отсутствует на публичном порту"
+code=$(probe_curl "$PROBE_ALLOWED" "$SVC:8080/internal/session/validate")
+[ "$code" = 404 ] || fail "validate на :8080 -> $code, ожидалось 404 (зона не смонтирована)"
+code_m=$(probe_curl "$PROBE_ALLOWED" "$SVC:8080/internal/metrics")
+[ "$code_m" = 404 ] || fail "metrics на :8080 -> $code_m, ожидалось 404"
+pass "validate и metrics на публичном порту -> 404"
+
+step "13. Внутренний порт закрыт сетевой политикой"
+code=$(probe_curl "$PROBE_PLAIN" "$SVC:8081/internal/session/validate")
+[ "$code" = 000 ] || fail "validate на :8081 из немаркированного пода -> $code, ожидалось отсутствие соединения"
+code=$(probe_curl "$PROBE_PLAIN" "$SVC:8080/healthz")
+[ "$code" = 000 ] || fail "публичный порт из немаркированного пода -> $code, ожидалось отсутствие соединения"
+code=$(probe_curl "$PROBE_ALLOWED" "$SVC:8081/internal/session/validate")
+[ "$code" = 401 ] || fail "validate на :8081 из разрешённого пода без cookie -> $code, ожидалось 401"
+code=$(probe_curl "$PROBE_ALLOWED" "$SVC:8081/internal/metrics")
+[ "$code" = 200 ] || fail "metrics на :8081 из разрешённого пода -> $code, ожидалось 200"
+pass "чужой под: соединения нет на оба порта; разрешённый под: validate 401 без cookie, metrics 200"
+
+step "14. Подделанные заголовки контекста перезаписываются на proxy"
+# У qa-пользователя стенда нет ролей — validate отдаёт ПУСТОЙ заголовок
+# прав; он обязан вытеснить подделанный, иначе пустое значение — дыра.
+forged=$(curl -s "${RESOLVE[@]}" "${COOKIE[@]}" \
+  -H 'x-identity-user-id: 00000000-0000-4000-8000-00000000f0f0' \
+  -H 'x-identity-email: forged@example.com' \
+  -H 'x-identity-permissions: gsh:admin.access' \
+  "http://$HOST/debug/echo")
+grep -q 'f0f0\|forged@example.com\|gsh:admin.access' <<< "$forged" && fail "подделанный заголовок дошёл до upstream: $forged"
+grep -q "$uid" <<< "$forged" || fail "upstream не получил id сессии: $forged"
+grep -qi '"x-identity-permissions":""' <<< "$forged" || fail "пустой заголовок прав не заменил подделанный: $forged"
+pass "upstream получил id сессии и пустые права; подделка не прошла"
+
+step "15. Первая установка чарта: хук миграций в пустом namespace"
 # Стенд держит зависимости в том же релизе и хук там выключен; здесь чарт
 # ставится как в проде — в пустой namespace, с внешней базой (отдельная БД
 # в PostgreSQL стенда) — и хук обязан отработать сам, без ресурсов релиза.
@@ -190,7 +259,7 @@ probe_cleanup
 kubectl delete namespace "$PROBE_NS" --ignore-not-found --wait=true >/dev/null 2>&1 || true
 # Уборка — в EXIT-trap до создания первого ресурса: любой fail, set -e или
 # прерывание иначе оставили бы БД, namespace и релиз (ревью Codex, PR #4).
-trap 'probe_cleanup; kill $PF_PID 2>/dev/null; rm -f "$COOKIE_JAR"' EXIT
+trap 'probe_cleanup; probe_cleanup_pods; kill $PF_PID 2>/dev/null; rm -f "$COOKIE_JAR"' EXIT
 probe_psql identity_development "CREATE DATABASE $PROBE_DB" >/dev/null || fail "не удалось создать БД $PROBE_DB"
 kubectl create namespace "$PROBE_NS" >/dev/null
 kubectl create secret generic hook-probe-secret -n "$PROBE_NS" \
@@ -202,10 +271,10 @@ install_out=$(helm install hook-probe charts/identity-service -n "$PROBE_NS" \
   --set image.repository=identity-service --set image.tag=dev --set image.pullPolicy=Never \
   --set config.APP_ENV=development --timeout 3m 2>&1) \
   || fail "helm install в пустой namespace не прошёл: $(tail -3 <<< "$install_out")"
-# Эталон — версия основной базы стенда: её мигрировал тот же образ, что
-# запускает хук. Считать по файлам в чекауте нельзя: образ и ветка могут
-# расходиться на одну миграцию.
-expected=$(probe_psql identity_development "SELECT max(version_id) FROM goose_db_version")
+# Эталон — число миграций в чекауте: stand-up собирает образ из него же,
+# и именно этот образ запускает хук. Основная база стенда эталоном быть не
+# может: при чередовании веток она бывает впереди текущей.
+expected=$(ls db/migrations/*.sql | wc -l | tr -d ' ')
 version=$(probe_psql "$PROBE_DB" "SELECT max(version_id) FROM goose_db_version")
 [ "$version" = "$expected" ] || fail "после первой установки версия схемы $version, ожидалась $expected"
 pass "helm install с нуля: хук отработал сам, версия схемы $version"
@@ -220,6 +289,6 @@ jobs_created=$(kubectl get events -n "$PROBE_NS" --field-selector reason=Success
 [ "$revision" = 2 ] && [ "$jobs_created" -ge 2 ] || fail "upgrade: revision=$revision, запусков Job миграций=$jobs_created"
 pass "helm upgrade: revision 2, хук миграций отработал повторно"
 probe_cleanup
-trap 'kill $PF_PID 2>/dev/null; rm -f "$COOKIE_JAR"' EXIT
+trap 'probe_cleanup_pods; kill $PF_PID 2>/dev/null; rm -f "$COOKIE_JAR"' EXIT
 
 printf '\nСТЕНД ПРОВЕРЕН ЦЕЛИКОМ\n' 

@@ -36,6 +36,7 @@ config:
   APP_ENV: development
   LOG_LEVEL: info
   LISTEN_ADDR: ":8080"
+  INTERNAL_LISTEN_ADDR: ":8081"
   SHUTDOWN_TIMEOUT: 10s
   # *.localhost, not a public domain: Chrome resolves it to loopback itself
   # (RFC 6761) and treats it as a secure context. The public localtest.me
@@ -54,6 +55,22 @@ config:
 
 debugEcho:
   enabled: true
+
+# The stand's router lives in this namespace and calls the subgraph on the
+# public port; stand scripts reach the internal port (e2e login for the
+# supergraph composition) from ad-hoc pods carrying the tools label —
+# stand-verify proves an unlabeled pod cannot.
+networkPolicy:
+  public:
+    extraFrom:
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/component: router
+  internal:
+    extraFrom:
+      - podSelector:
+          matchLabels:
+            identity-stand/tools: "true"
 
 gateway:
   enabled: true

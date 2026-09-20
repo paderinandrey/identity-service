@@ -135,7 +135,7 @@ func TestProductionWithAllRequired(t *testing.T) {
 	t.Setenv(EnvBaseURL, "https://id.example.com/")
 	t.Setenv(EnvFrontendBaseURL, "https://app.example.com")
 	t.Setenv(EnvSAMLIdPMetadataURL, "https://example.okta.com/app/xxx/sso/saml/metadata")
-	t.Setenv(EnvRelayStateSecret, "s3cret")
+	t.Setenv(EnvRelayStateSecret, "a-production-grade-relay-secret-0123456789")
 	t.Setenv(EnvRabbitMQURL, "amqp://mq:5672/")
 
 	cfg, err := Load()
@@ -214,7 +214,7 @@ func TestE2ELoginTokenForbiddenInProduction(t *testing.T) {
 	t.Setenv(EnvBaseURL, "https://id.example.com")
 	t.Setenv(EnvFrontendBaseURL, "https://app.example.com")
 	t.Setenv(EnvSAMLIdPMetadataURL, "https://example.okta.com/metadata")
-	t.Setenv(EnvRelayStateSecret, "s3cret")
+	t.Setenv(EnvRelayStateSecret, "a-production-grade-relay-secret-0123456789")
 	t.Setenv(EnvRabbitMQURL, "amqp://mq:5672/")
 
 	if _, err := Load(); err != nil {
@@ -253,4 +253,99 @@ func TestSAMLAllowIDPInitiated(t *testing.T) {
 	if _, err := Load(); err == nil {
 		t.Error("non-boolean SAML_ALLOW_IDP_INITIATED must be rejected")
 	}
+}
+
+func TestCacheMaxEntries(t *testing.T) {
+	cfg, err := Load()
+	if err != nil || cfg.CacheMaxEntries != DefaultCacheMaxEntries {
+		t.Fatalf("default = %d, %v", cfg.CacheMaxEntries, err)
+	}
+	t.Setenv(EnvCacheMaxEntries, "250")
+	cfg, err = Load()
+	if err != nil || cfg.CacheMaxEntries != 250 {
+		t.Errorf("CACHE_MAX_ENTRIES=250: %d, %v", cfg.CacheMaxEntries, err)
+	}
+	t.Setenv(EnvCacheMaxEntries, "0")
+	if _, err := Load(); err == nil {
+		t.Error("non-positive CACHE_MAX_ENTRIES must be rejected")
+	}
+}
+
+func TestRelayStateSecretStrengthOutsideDevelopment(t *testing.T) {
+	setProduction := func(t *testing.T, secret string) {
+		t.Helper()
+		t.Setenv(EnvAppEnv, "staging")
+		t.Setenv(EnvDatabaseURL, "postgres://x")
+		t.Setenv(EnvRedisURL, "redis://x")
+		t.Setenv(EnvBaseURL, "https://id.example.com")
+		t.Setenv(EnvFrontendBaseURL, "https://app.example.com")
+		t.Setenv(EnvSAMLIdPMetadataURL, "https://idp.example.com/metadata")
+		t.Setenv(EnvRabbitMQURL, "amqp://x")
+		t.Setenv(EnvRelayStateSecret, secret)
+	}
+	setProduction(t, "short")
+	if _, err := Load(); err == nil {
+		t.Error("a short RelayState secret must be rejected outside development")
+	}
+	setProduction(t, DefaultRelayStateSecret)
+	if _, err := Load(); err == nil {
+		t.Error("the development default must be rejected outside development")
+	}
+	setProduction(t, "a-proper-secret-of-thirty-two-chars-or-more")
+	if _, err := Load(); err != nil {
+		t.Errorf("a strong secret must pass: %v", err)
+	}
+}
+
+func TestAppEnvMustBeExplicitInKubernetes(t *testing.T) {
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+	t.Setenv(EnvAppEnv, "")
+	if _, err := Load(); err == nil {
+		t.Error("missing APP_ENV inside Kubernetes must be an error, not development")
+	}
+	t.Setenv(EnvAppEnv, "development")
+	if _, err := Load(); err != nil {
+		t.Errorf("explicit development inside Kubernetes must pass: %v", err)
+	}
+}
+
+func TestInternalListenAddr(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		t.Setenv(EnvInternalListenAddr, "")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.InternalListenAddr != DefaultInternalListenAddr {
+			t.Errorf("InternalListenAddr = %q, want %q", cfg.InternalListenAddr, DefaultInternalListenAddr)
+		}
+	})
+
+	t.Run("override", func(t *testing.T) {
+		t.Setenv(EnvInternalListenAddr, "127.0.0.1:9091")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.InternalListenAddr != "127.0.0.1:9091" {
+			t.Errorf("InternalListenAddr = %q", cfg.InternalListenAddr)
+		}
+	})
+
+	// The two zones exist to be told apart by port; one address for both
+	// would silently merge them, so it is a configuration error with a
+	// message naming both variables — not a bind failure later.
+	t.Run("same as public", func(t *testing.T) {
+		t.Setenv(EnvListenAddr, ":9090")
+		t.Setenv(EnvInternalListenAddr, ":9090")
+		_, err := Load()
+		if err == nil {
+			t.Fatal("Load() with equal listen addresses: want error, got nil")
+		}
+		for _, name := range []string{EnvListenAddr, EnvInternalListenAddr} {
+			if !strings.Contains(err.Error(), name) {
+				t.Errorf("error must name %s, got: %v", name, err)
+			}
+		}
+	})
 }

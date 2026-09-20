@@ -45,6 +45,9 @@ spec:
             - name: http
               containerPort: {{ .Values.service.targetPort }}
               protocol: TCP
+            - name: internal
+              containerPort: {{ .Values.service.internalTargetPort }}
+              protocol: TCP
           {{- include "identity-service.env" . | nindent 10 }}
           livenessProbe:
             httpGet:

@@ -22,9 +22,14 @@ is actually published.
 
 Consumers own their queues. Declare a durable queue named after your
 service (for example `gsh.identity.users`), bind it to `identity.events`
-with `user.#`, and keep it bound: a message published while no queue is
-bound is returned to the producer as unroutable and waits in its outbox,
-it is not lost — but it is not delivered either until the binding exists.
+with `user.#`, and keep it bound. An event published while your queue is
+not bound is not delivered to you and RabbitMQ does not keep it for you:
+bind the queue before you need events, then run `replay-users` (below)
+to load everything that happened earlier. Once the relay publishes with
+the mandatory flag (the `relay-lease` change), an event that no queue
+accepts stays in the producer's outbox instead of being marked
+published, so a late binding does not lose it either way — but replay
+remains the bootstrap path.
 
 ## Delivery guarantees
 
@@ -65,11 +70,16 @@ it is not lost — but it is not delivered either until the binding exists.
    the type is for routing, metrics and for reacting to a deactivation
    (for example closing the user's live connections) — not for deciding
    whether to apply the snapshot. A type you do not know is still a
-   snapshot: apply it. That is how new types stay compatible.
+   snapshot: apply it. That is how new types stay compatible, and why
+   the schema constrains `type` by pattern rather than by enum: a
+   consumer validating against the schema must not reject a new type.
 4. **Reject what you cannot parse.** A body that is not valid JSON, does
-   not match the schema or has an unknown `schemaVersion` is rejected to
-   a dead-letter queue (nack without requeue) and reported; retrying it
-   cannot help.
+   not match the schema (a required field missing, `active` included)
+   or has an unknown `schemaVersion` is rejected and reported; retrying
+   it cannot help. Give your queue a dead-letter exchange
+   (`x-dead-letter-exchange` on the queue declaration) and a queue bound
+   to it, then nack without requeue: without the dead-letter exchange
+   a nack simply discards the message and the evidence with it.
 5. **Keep the user id as the key.** Email changes; the id never does.
    Existing local users are linked to the global id once, during the
    initial load, never by email at runtime.

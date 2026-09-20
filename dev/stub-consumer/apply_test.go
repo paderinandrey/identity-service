@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 )
 
 func body(t *testing.T, id string, eventType string, user UserSnapshot) []byte {
 	t.Helper()
-	b, err := json.Marshal(Event{ID: id, Type: eventType, SchemaVersion: 1, User: user})
+	b, err := json.Marshal(Event{ID: id, Type: eventType, SchemaVersion: 1, OccurredAt: time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC), User: user})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,15 +86,20 @@ func TestUnparsableBodiesAreRejected(t *testing.T) {
 	noVersion.Version = 0
 	for name, msg := range map[string][]byte{
 		"not json":              []byte("{"),
-		"unknown schemaVersion": []byte(`{"id":"e1","type":"identity.user.updated","schemaVersion":2,"user":{"id":"u","email":"a@example.com","name":"A","active":true,"version":1}}`),
+		"unknown schemaVersion": []byte(`{"id":"e1","type":"identity.user.updated","schemaVersion":2,"occurredAt":"2026-09-19T12:00:00Z","user":{"id":"u","email":"a@example.com","name":"A","active":true,"version":1}}`),
 		"missing user id":       body(t, "e2", "identity.user.updated", UserSnapshot{Email: "a@example.com", Version: 1}),
 		"version below one":     body(t, "e3", "identity.user.updated", noVersion),
+		// A higher-version body without "active" must not decode as
+		// active=false and deactivate the user (Codex review, PR #12).
+		"missing active":      []byte(`{"id":"e5","type":"identity.user.updated","schemaVersion":1,"occurredAt":"2026-09-19T12:00:00Z","user":{"id":"u","email":"a@example.com","name":"A","version":9}}`),
+		"missing occurredAt":  []byte(`{"id":"e6","type":"identity.user.updated","schemaVersion":1,"user":{"id":"u","email":"a@example.com","name":"A","active":true,"version":1}}`),
+		"type outside family": body(t, "e7", "user.updated", ada),
 	} {
 		if got := p.Apply(msg); got != Rejected {
 			t.Errorf("%s = %s, want rejected", name, got)
 		}
 	}
-	if len(p.Users()) != 0 || p.Stats().Rejected != 4 {
+	if len(p.Users()) != 0 || p.Stats().Rejected != 7 {
 		t.Errorf("rejected bodies must not touch the projection: users=%v stats=%+v", p.Users(), p.Stats())
 	}
 }

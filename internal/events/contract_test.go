@@ -87,7 +87,7 @@ func TestSchemaRejectsDrift(t *testing.T) {
 		"unknown user field":      func(m map[string]any) { m["user"].(map[string]any)["title"] = "x" },
 		"missing version":         func(m map[string]any) { delete(m["user"].(map[string]any), "version") },
 		"unknown schemaVersion":   func(m map[string]any) { m["schemaVersion"] = 2 },
-		"unknown type":            func(m map[string]any) { m["type"] = "identity.user.deleted" },
+		"type outside the family": func(m map[string]any) { m["type"] = "user.updated" },
 		"non-uuid user id":        func(m map[string]any) { m["user"].(map[string]any)["id"] = "42" },
 	} {
 		t.Run(name, func(t *testing.T) {

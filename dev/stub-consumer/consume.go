@@ -56,7 +56,20 @@ func (c *Consumer) consumeOnce(ctx context.Context) error {
 	if err := ch.ExchangeDeclare(c.exchange, "topic", true, false, false, false, nil); err != nil {
 		return err
 	}
-	if _, err := ch.QueueDeclare(c.queue, true, false, false, false, nil); err != nil {
+	// Rejected bodies go to a dead-letter queue the consumer owns; without
+	// the x-dead-letter-exchange argument a nack just discards the
+	// message and the evidence with it (Codex review, PR #12).
+	dlx := c.queue + ".dlx"
+	if err := ch.ExchangeDeclare(dlx, "fanout", true, false, false, false, nil); err != nil {
+		return err
+	}
+	if _, err := ch.QueueDeclare(c.queue+".dlq", true, false, false, false, nil); err != nil {
+		return err
+	}
+	if err := ch.QueueBind(c.queue+".dlq", "", dlx, false, nil); err != nil {
+		return err
+	}
+	if _, err := ch.QueueDeclare(c.queue, true, false, false, false, amqp.Table{"x-dead-letter-exchange": dlx}); err != nil {
 		return err
 	}
 	if err := ch.QueueBind(c.queue, "user.#", c.exchange, false, nil); err != nil {
@@ -83,7 +96,8 @@ func (c *Consumer) consumeOnce(ctx context.Context) error {
 			c.logger.Info("event", "message_id", d.MessageId, "type", d.Type, "outcome", outcome)
 			var ackErr error
 			if outcome == Rejected {
-				// Dead-letter, never requeue: the body itself is the problem.
+				// Dead-letter (via the queue's DLX), never requeue: the body
+				// itself is the problem.
 				ackErr = d.Nack(false, false)
 			} else {
 				ackErr = d.Ack(false)

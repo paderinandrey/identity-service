@@ -95,7 +95,11 @@ func newEnv(t *testing.T, redisClient *redis.Client, cfg Config) *env {
 	}
 
 	mux := http.NewServeMux()
-	NewHandlers(manager, users, []string{"http://app.example.com"}).Register(mux)
+	// One mux for both zones: the zone split is the HTTP server's job
+	// (tested in httpserver); these tests cover the handlers themselves.
+	handlers := NewHandlers(manager, users, []string{"http://app.example.com"})
+	handlers.Register(mux)
+	handlers.RegisterInternal(mux)
 	mux.HandleFunc("POST /test/login", func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("user")
 		var epoch int64
@@ -678,5 +682,33 @@ func TestDelayedRevocationCannotLowerFence(t *testing.T) {
 	e.login(t, "u1")
 	if got := e.get(t, "/auth/me"); got.StatusCode != http.StatusOK {
 		t.Errorf("session at the current generation = %d, want 200", got.StatusCode)
+	}
+}
+
+func TestOriginSetCanonicalises(t *testing.T) {
+	// Codex review, PR #9: browsers send a lowercase host without the
+	// default port; a configured spelling must not decide the outcome.
+	allowed := OriginSet([]string{"https://ID.Example.com:443/", "http://app.example.com:8080/path"})
+	for _, ok := range []string{
+		"https://id.example.com",
+		"HTTPS://id.example.com",
+		"https://id.example.com:443",
+		"http://app.example.com:8080",
+		"", // non-browser caller
+	} {
+		if !OriginAllowed(allowed, ok) {
+			t.Errorf("origin %q must be allowed", ok)
+		}
+	}
+	for _, bad := range []string{
+		"http://id.example.com",       // scheme matters
+		"https://id.example.com:8443", // a different port is a different origin
+		"http://app.example.com",      // configured with :8080, not the default
+		"https://evil.example.com",
+		"not a url",
+	} {
+		if OriginAllowed(allowed, bad) {
+			t.Errorf("origin %q must be refused", bad)
+		}
 	}
 }

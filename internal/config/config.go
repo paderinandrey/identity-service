@@ -12,10 +12,11 @@ import (
 
 // Environment variable names.
 const (
-	EnvListenAddr      = "LISTEN_ADDR"
-	EnvAppEnv          = "APP_ENV"
-	EnvLogLevel        = "LOG_LEVEL"
-	EnvShutdownTimeout = "SHUTDOWN_TIMEOUT"
+	EnvListenAddr         = "LISTEN_ADDR"
+	EnvInternalListenAddr = "INTERNAL_LISTEN_ADDR"
+	EnvAppEnv             = "APP_ENV"
+	EnvLogLevel           = "LOG_LEVEL"
+	EnvShutdownTimeout    = "SHUTDOWN_TIMEOUT"
 
 	EnvDatabaseURL           = "DATABASE_URL"
 	EnvRedisURL              = "REDIS_URL"
@@ -30,6 +31,7 @@ const (
 	EnvSessionsMaxConcurrent = "SESSIONS_MAX_CONCURRENT"
 	EnvUserRevocationDelay   = "USER_REVOCATION_DELAY"
 	EnvPermissionsCacheTTL   = "PERMISSIONS_CACHE_TTL"
+	EnvCacheMaxEntries       = "CACHE_MAX_ENTRIES"
 	EnvSCIMToken             = "SCIM_TOKEN"
 	EnvRabbitMQURL           = "RABBITMQ_URL"
 	EnvEventsExchange        = "EVENTS_EXCHANGE"
@@ -39,10 +41,11 @@ const (
 
 // Defaults are safe for local development only.
 const (
-	DefaultListenAddr      = ":8080"
-	DefaultAppEnv          = "development"
-	DefaultLogLevel        = slog.LevelInfo
-	DefaultShutdownTimeout = 10 * time.Second
+	DefaultListenAddr         = ":8080"
+	DefaultInternalListenAddr = ":8081"
+	DefaultAppEnv             = "development"
+	DefaultLogLevel           = slog.LevelInfo
+	DefaultShutdownTimeout    = 10 * time.Second
 
 	DefaultDatabaseURL           = "postgres://identity:identity@localhost:5433/identity_development?sslmode=disable"
 	DefaultRedisURL              = "redis://localhost:6380/0"
@@ -55,6 +58,9 @@ const (
 	DefaultSessionsMaxConcurrent = 100
 	DefaultUserRevocationDelay   = 60 * time.Second
 	DefaultPermissionsCacheTTL   = 60 * time.Second
+	// DefaultCacheMaxEntries bounds each hot-path cache; entries are tens
+	// of bytes, so this is megabytes at most.
+	DefaultCacheMaxEntries = 10000
 
 	DefaultRabbitMQURL    = "amqp://identity:identity@localhost:5673/"
 	DefaultEventsExchange = "identity.events"
@@ -68,10 +74,15 @@ var validAppEnvs = map[string]bool{
 
 // Config holds the runtime configuration of the service.
 type Config struct {
-	ListenAddr      string
-	AppEnv          string
-	LogLevel        slog.Level
-	ShutdownTimeout time.Duration
+	// ListenAddr serves the public zone (sign-in, provisioning, GraphQL,
+	// probes); InternalListenAddr serves the cluster-only zone (session
+	// validation for ext-auth, metrics, e2e login). Different ports so
+	// the Service and NetworkPolicy can tell them apart.
+	ListenAddr         string
+	InternalListenAddr string
+	AppEnv             string
+	LogLevel           slog.Level
+	ShutdownTimeout    time.Duration
 
 	DatabaseURL        string
 	RedisURL           string
@@ -90,6 +101,8 @@ type Config struct {
 	SessionsMaxConcurrent int
 	UserRevocationDelay   time.Duration
 	PermissionsCacheTTL   time.Duration
+	// CacheMaxEntries caps the user and permissions caches (each).
+	CacheMaxEntries int
 
 	// SCIMToken enables SCIM provisioning endpoints when non-empty.
 	SCIMToken string
@@ -113,10 +126,11 @@ func (c Config) IsDevelopment() bool { return c.AppEnv == "development" }
 // connection strings, URLs and secrets are required. Invalid values are an error.
 func Load() (Config, error) {
 	cfg := Config{
-		ListenAddr:      DefaultListenAddr,
-		AppEnv:          DefaultAppEnv,
-		LogLevel:        DefaultLogLevel,
-		ShutdownTimeout: DefaultShutdownTimeout,
+		ListenAddr:         DefaultListenAddr,
+		InternalListenAddr: DefaultInternalListenAddr,
+		AppEnv:             DefaultAppEnv,
+		LogLevel:           DefaultLogLevel,
+		ShutdownTimeout:    DefaultShutdownTimeout,
 
 		SessionCookieName:     DefaultSessionCookieName,
 		SessionIdleTimeout:    DefaultSessionIdleTimeout,
@@ -124,10 +138,17 @@ func Load() (Config, error) {
 		SessionsMaxConcurrent: DefaultSessionsMaxConcurrent,
 		UserRevocationDelay:   DefaultUserRevocationDelay,
 		PermissionsCacheTTL:   DefaultPermissionsCacheTTL,
+		CacheMaxEntries:       DefaultCacheMaxEntries,
 	}
 
 	if v := os.Getenv(EnvListenAddr); v != "" {
 		cfg.ListenAddr = v
+	}
+	if v := os.Getenv(EnvInternalListenAddr); v != "" {
+		cfg.InternalListenAddr = v
+	}
+	if cfg.InternalListenAddr == cfg.ListenAddr {
+		return Config{}, fmt.Errorf("%s and %s must differ (got %q for both): the internal zone is told apart by port", EnvListenAddr, EnvInternalListenAddr, cfg.ListenAddr)
 	}
 
 	if v := os.Getenv(EnvAppEnv); v != "" {
@@ -166,6 +187,14 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("%s: want a positive integer, got %q", EnvSessionsMaxConcurrent, v)
 		}
 		cfg.SessionsMaxConcurrent = n
+	}
+
+	if v := os.Getenv(EnvCacheMaxEntries); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return Config{}, fmt.Errorf("%s: want a positive integer, got %q", EnvCacheMaxEntries, v)
+		}
+		cfg.CacheMaxEntries = n
 	}
 
 	if v := os.Getenv(EnvSessionCookieName); v != "" {
@@ -207,10 +236,25 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("%s must not be set in production", EnvE2ELoginToken)
 	}
 
+	// Inside Kubernetes the environment name must be explicit: a pod that
+	// forgot APP_ENV must not quietly run with development defaults
+	// (insecure cookie, placeholder secrets).
+	if os.Getenv(EnvAppEnv) == "" && os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		return Config{}, fmt.Errorf("%s must be set explicitly when running in Kubernetes", EnvAppEnv)
+	}
+
 	if cfg.IsDevelopment() {
 		applyDevelopmentDefaults(&cfg)
 	} else if missing := missingRequired(cfg); len(missing) > 0 {
 		return Config{}, fmt.Errorf("%s=%s requires environment variables: %s", EnvAppEnv, cfg.AppEnv, strings.Join(missing, ", "))
+	}
+	if !cfg.IsDevelopment() {
+		if len(cfg.RelayStateSecret) < 32 {
+			return Config{}, fmt.Errorf("%s must be at least 32 characters outside development", EnvRelayStateSecret)
+		}
+		if cfg.RelayStateSecret == DefaultRelayStateSecret {
+			return Config{}, fmt.Errorf("%s must not be the development default outside development", EnvRelayStateSecret)
+		}
 	}
 
 	return cfg, nil

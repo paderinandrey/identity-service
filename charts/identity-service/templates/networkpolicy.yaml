@@ -1,0 +1,50 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- /*
+Ingress isolation of the two zones. Peers are selected by namespace label
+(kubernetes.io/metadata.name is set by Kubernetes itself), not by the
+proxy pods' labels, which Envoy Gateway generates. Named ports keep the
+policy in step with the Deployment if the numbers ever change.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "identity-service.fullname" . }}
+  labels:
+    {{- include "identity-service.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "identity-service.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Public zone: the entry proxy, plus explicitly listed peers such as
+    # the GraphQL Router.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.gatewayNamespace | quote }}
+        {{- with .Values.networkPolicy.public.extraFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - port: http
+          protocol: TCP
+    # Internal zone: ext-auth from the proxy, scrapes from monitoring,
+    # plus explicitly listed peers.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.gatewayNamespace | quote }}
+        {{- with .Values.networkPolicy.monitoringNamespace }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.networkPolicy.internal.extraFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - port: internal
+          protocol: TCP
+{{- end }}

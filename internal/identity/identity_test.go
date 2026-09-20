@@ -102,7 +102,7 @@ func TestUserCacheServesRepeatedLookupsFromMemory(t *testing.T) {
 	store := &countingStore{users: map[string]*User{
 		"u1": {ID: "u1", Email: "u1@example.com", Active: true},
 	}}
-	cache := NewUserCache(store, time.Minute)
+	cache := NewUserCache(store, time.Minute, 100)
 
 	for range 5 {
 		user, err := cache.FindByID(t.Context(), "u1")
@@ -123,9 +123,9 @@ func TestUserCacheRefreshesAfterTTL(t *testing.T) {
 	store := &countingStore{users: map[string]*User{
 		"u1": {ID: "u1", Email: "old@example.com", Active: true},
 	}}
-	cache := NewUserCache(store, time.Minute)
+	cache := NewUserCache(store, time.Minute, 100)
 	current := time.Now()
-	cache.now = func() time.Time { return current }
+	cache.inner.SetClock(func() time.Time { return current })
 
 	if _, err := cache.FindByID(t.Context(), "u1"); err != nil {
 		t.Fatal(err)
@@ -148,7 +148,7 @@ func TestUserCacheRefreshesAfterTTL(t *testing.T) {
 
 func TestUserCacheCachesMisses(t *testing.T) {
 	store := &countingStore{users: map[string]*User{}}
-	cache := NewUserCache(store, time.Minute)
+	cache := NewUserCache(store, time.Minute, 100)
 
 	for range 3 {
 		if _, err := cache.FindByID(t.Context(), "ghost"); !errors.Is(err, ErrUserNotFound) {

@@ -92,7 +92,7 @@ spec:
     http:
       backendRefs:
         - name: {{ $fullName }}
-          port: {{ .Values.service.port }}
+          port: {{ .Values.service.internalPort }}
       path: {{ .Values.gateway.extAuth.path }}
       headersToBackend:
         {{- toYaml .Values.gateway.extAuth.headersToBackend | nindent 8 }}
