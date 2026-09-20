@@ -655,17 +655,21 @@ func TestBrokerOutageSpendsNoRetryBudget(t *testing.T) {
 	})
 }
 
-func TestClaimRepairsRowsWrittenWithoutUserID(t *testing.T) {
-	// A replica of the previous release inserts rows with user_id NULL
-	// during a rolling update. The relay must still keep per-user order,
-	// so it lifts the user out of the payload before selecting.
+func TestRowsWrittenWithoutUserIDKeepPerUserOrder(t *testing.T) {
+	// A replica of the previous release inserts rows with user_id and
+	// user_version NULL during a rolling update. They are ordered from
+	// the payload, never repaired: one such row with a lower version must
+	// still publish before a fully populated row with a higher one.
 	e := newEnvUnbound(t)
 	user, err := e.store.CreateUser(t.Context(), "legacy@example.com", "V1", true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.pool.Exec(t.Context(),
-		"UPDATE user_events_outbox SET user_id = NULL WHERE user_id = $1", user.ID); err != nil {
+		"UPDATE user_events_outbox SET user_id = NULL, user_version = NULL WHERE user_id = $1", user.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.UpdateUser(t.Context(), user.ID, "legacy@example.com", "V2"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -674,10 +678,25 @@ func TestClaimRepairsRowsWrittenWithoutUserID(t *testing.T) {
 	defer stop()
 	waitFor(t, 10*time.Second, func() bool { return e.unpublishedCount(t) == 0 })
 
-	var repaired bool
+	var versions []int64
+	for _, id := range pub.got() {
+		var v int64
+		if err := e.pool.QueryRow(t.Context(),
+			"SELECT (payload -> 'user' ->> 'version')::bigint FROM user_events_outbox WHERE id = $1", id).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		versions = append(versions, v)
+	}
+	if len(versions) != 2 || versions[0] >= versions[1] {
+		t.Errorf("published versions %v, want the legacy row (v1) before the new one (v2)", versions)
+	}
+	var stillNull int
 	if err := e.pool.QueryRow(t.Context(),
-		"SELECT user_id = $1 FROM user_events_outbox WHERE user_id IS NOT NULL LIMIT 1", user.ID).Scan(&repaired); err != nil || !repaired {
-		t.Errorf("user_id must be repaired from the payload before claiming: %v %v", repaired, err)
+		"SELECT count(*) FROM user_events_outbox WHERE user_id IS NULL").Scan(&stillNull); err != nil {
+		t.Fatal(err)
+	}
+	if stillNull != 1 {
+		t.Errorf("legacy rows are left as written (no repair pass): NULL user_id rows = %d, want 1", stillNull)
 	}
 }
 

@@ -175,19 +175,12 @@ type outboxRow struct {
 // with the lower timestamp (Codex review, PR #6).
 func (r *Relay) claim(ctx context.Context) ([]outboxRow, error) {
 	// Rows written by a replica of the previous release carry the user
-	// only in the payload (user_id NULL). Repair pending rows so the
-	// per-user index applies to them; bounded by the pending set, a
-	// no-op once the old writers are gone. A row such a replica commits
-	// between this statement and the claim is still ordered correctly:
-	// the predicate below falls back to the payload for NULL columns.
-	if _, err := r.pool.Exec(ctx,
-		`UPDATE user_events_outbox
-		 SET user_id = (payload -> 'user' ->> 'id')::uuid,
-		     user_version = (payload -> 'user' ->> 'version')::bigint
-		 WHERE (user_id IS NULL OR user_version IS NULL) AND published_at IS NULL
-		   AND payload -> 'user' ->> 'id' IS NOT NULL`); err != nil {
-		return nil, fmt.Errorf("repair outbox user ids: %w", err)
-	}
+	// only in the payload (user_id NULL). No repair pass: the predicate
+	// and the per-user index are both keyed on COALESCE(column, payload),
+	// so such rows are ordered and claimed like any other, and a per-loop
+	// UPDATE over the unpublished set would scan the outbox forever after
+	// the rollout (Codex review, PR #6). Existing pending rows were
+	// backfilled once by migration 00011.
 	rows, err := r.pool.Query(ctx,
 		`WITH picked AS (
 		   SELECT o.id FROM user_events_outbox o
