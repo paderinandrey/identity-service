@@ -9,7 +9,7 @@
 | [public.permissions](public.permissions.md)               | 4       | Permissions owned by applications; granted to users through roles                    | BASE TABLE |
 | [public.role_permissions](public.role_permissions.md)     | 4       | Role composition; same-application invariant enforced by composite FKs               | BASE TABLE |
 | [public.roles](public.roles.md)                           | 4       | Roles owned by applications; assigned to users via user_roles                        | BASE TABLE |
-| [public.user_events_outbox](public.user_events_outbox.md) | 7       | Transactional outbox: user-change events awaiting publication to RabbitMQ            | BASE TABLE |
+| [public.user_events_outbox](public.user_events_outbox.md) | 12      | Transactional outbox: user-change events awaiting publication to RabbitMQ            | BASE TABLE |
 | [public.user_identities](public.user_identities.md)       | 5       | External identity mappings (SSO providers) to unified users                          | BASE TABLE |
 | [public.user_roles](public.user_roles.md)                 | 4       | Role assignments; the only source of truth for user access                           | BASE TABLE |
 | [public.users](public.users.md)                           | 9       | Unified application users shared across GSH/DFM ecosystem                            | BASE TABLE |
@@ -118,8 +118,13 @@ erDiagram
   text event_type
   uuid id
   text last_error
+  timestamp_with_time_zone lease_until
+  text leased_by
   jsonb payload
   timestamp_with_time_zone published_at
+  timestamp_with_time_zone quarantined_at
+  uuid user_id
+  bigint user_version
 }
 "public.user_identities" {
   timestamp_with_time_zone created_at
