@@ -22,7 +22,12 @@ const (
 	// leaseDuration comfortably exceeds the worst case of a batch
 	// (batchSize × publishTimeout); a replica that dies mid-batch releases
 	// its rows when the lease expires.
-	leaseDuration     = 5 * time.Minute
+	leaseDuration = 5 * time.Minute
+	// settleTimeout bounds recording a batch's outcomes once the service
+	// context is gone: the leases must be released and confirmed publishes
+	// marked even during shutdown, or the rows sit for a full lease and
+	// confirmed events are republished (Codex review, PR #6).
+	settleTimeout     = 10 * time.Second
 	loopBackoffMax    = 30 * time.Second
 	retentionInterval = time.Hour
 	retentionBatch    = 1000
@@ -273,8 +278,13 @@ func (r *Relay) drainOnce(ctx context.Context) (int, error) {
 	return published, stop
 }
 
-// settle records every outcome of a batch in one short transaction.
+// settle records every outcome of a batch in one short transaction. It
+// runs on a context detached from the service's cancellation: a SIGTERM
+// that interrupts the batch must still release the leases and mark what
+// the broker already confirmed.
 func (r *Relay) settle(ctx context.Context, outcomes []outcome) (int, error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), settleTimeout)
+	defer cancel()
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return 0, err

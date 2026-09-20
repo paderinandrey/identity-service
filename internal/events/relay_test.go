@@ -733,3 +733,48 @@ func TestPerUserOrderFollowsVersionNotTimestamp(t *testing.T) {
 		t.Errorf("published %d events, want 5", len(versions))
 	}
 }
+
+// blockingPublisher parks every publish until its context is cancelled,
+// which is what a broker that stopped answering looks like at SIGTERM.
+type blockingPublisher struct {
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (p *blockingPublisher) Publish(ctx context.Context, _ events.Message) error {
+	p.once.Do(func() { close(p.entered) })
+	<-ctx.Done()
+	return fmt.Errorf("%w: %w", events.ErrTransport, ctx.Err())
+}
+
+func (p *blockingPublisher) Close() {}
+
+// A batch interrupted by shutdown must not keep its leases: settle runs
+// on a detached context so the rows are released at once instead of
+// after the full lease (Codex review, PR #6).
+func TestShutdownReleasesClaimedLeases(t *testing.T) {
+	e := newEnvUnbound(t)
+	if _, err := e.store.CreateUser(t.Context(), "interrupted@example.com", "V1", true); err != nil {
+		t.Fatal(err)
+	}
+	pub := &blockingPublisher{entered: make(chan struct{})}
+	stop := e.runRelayWith(t, amqpURL, func(r *events.Relay) { r.SetPublisher(pub) })
+	select {
+	case <-pub.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("relay never claimed the batch")
+	}
+	stop() // cancels the context and waits for Run to return
+
+	var leased int
+	if err := e.pool.QueryRow(context.Background(),
+		"SELECT count(*) FROM user_events_outbox WHERE leased_by IS NOT NULL OR lease_until IS NOT NULL").Scan(&leased); err != nil {
+		t.Fatal(err)
+	}
+	if leased != 0 {
+		t.Errorf("%d row(s) still leased after shutdown; the batch was not settled", leased)
+	}
+	if e.unpublishedCount(t) != 1 {
+		t.Errorf("unpublished = %d, want 1 (nothing was confirmed)", e.unpublishedCount(t))
+	}
+}

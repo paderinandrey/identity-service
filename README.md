@@ -282,6 +282,12 @@ broker outages and service restarts in the outbox. `replay-users` enqueues
 `user.snapshot` events for every user to bootstrap or repair a projection.
 The broker is deliberately excluded from `/readyz`.
 
+Rolling out the lease-based relay onto an environment that already runs
+the pre-lease relay needs a one-time `strategy: Recreate` (or scaling the
+old release to zero first): an old replica ignores leases and publishes
+inside its own transaction in `created_at` order, so overlapping old and
+new relays could invert a user's versions during that single rollout.
+
 How the relay works, and what consumers must do:
 
 - **Leases, not locks.** A short transaction claims a batch under a

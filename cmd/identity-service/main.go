@@ -153,7 +153,14 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	relay := events.NewRelay(pool, cfg.RabbitMQURL, cfg.EventsExchange, logger)
 	relay.SetMetrics(obs.Relay())
 	relay.SetRetention(cfg.OutboxRetention)
-	go relay.Run(ctx)
+	// The relay must finish settling its current batch before the pool
+	// closes, or an interrupted batch keeps its leases (Codex review,
+	// PR #6); serve waits for it below.
+	relayDone := make(chan struct{})
+	go func() {
+		defer close(relayDone)
+		relay.Run(ctx)
+	}()
 
 	srv := httpserver.New(cfg.ListenAddr, logger, cfg.ShutdownTimeout,
 		httpserver.WithWrapper(func(h http.Handler) http.Handler {
@@ -199,6 +206,11 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	)
 	if err := srv.Run(ctx); err != nil {
 		return err
+	}
+	select {
+	case <-relayDone:
+	case <-time.After(cfg.ShutdownTimeout):
+		logger.Warn("relay did not stop within the shutdown timeout")
 	}
 	logger.Info("stopped")
 	return nil
