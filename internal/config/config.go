@@ -35,6 +35,7 @@ const (
 	EnvSCIMToken             = "SCIM_TOKEN"
 	EnvRabbitMQURL           = "RABBITMQ_URL"
 	EnvEventsExchange        = "EVENTS_EXCHANGE"
+	EnvOutboxRetention       = "OUTBOX_RETENTION"
 	EnvSentryDSN             = "SENTRY_DSN"
 	EnvE2ELoginToken         = "E2E_LOGIN_TOKEN"
 )
@@ -64,6 +65,9 @@ const (
 
 	DefaultRabbitMQURL    = "amqp://identity:identity@localhost:5673/"
 	DefaultEventsExchange = "identity.events"
+	// DefaultOutboxRetention keeps published events for a month: the
+	// outbox is the local record of what was delivered and when.
+	DefaultOutboxRetention = 30 * 24 * time.Hour
 )
 
 var validAppEnvs = map[string]bool{
@@ -109,6 +113,8 @@ type Config struct {
 
 	RabbitMQURL    string
 	EventsExchange string
+	// OutboxRetention is how long published events stay in the outbox.
+	OutboxRetention time.Duration
 
 	// SentryDSN enables error reporting when non-empty.
 	SentryDSN string
@@ -138,6 +144,7 @@ func Load() (Config, error) {
 		SessionsMaxConcurrent: DefaultSessionsMaxConcurrent,
 		UserRevocationDelay:   DefaultUserRevocationDelay,
 		PermissionsCacheTTL:   DefaultPermissionsCacheTTL,
+		OutboxRetention:       DefaultOutboxRetention,
 		CacheMaxEntries:       DefaultCacheMaxEntries,
 	}
 
@@ -175,6 +182,7 @@ func Load() (Config, error) {
 		{EnvSessionLifetime, &cfg.SessionLifetime},
 		{EnvUserRevocationDelay, &cfg.UserRevocationDelay},
 		{EnvPermissionsCacheTTL, &cfg.PermissionsCacheTTL},
+		{EnvOutboxRetention, &cfg.OutboxRetention},
 	} {
 		if err := loadDuration(d.envVar, d.dst); err != nil {
 			return Config{}, err

@@ -18,10 +18,24 @@ func recordUserEvent(ctx context.Context, tx pgx.Tx, eventType string, user *ide
 		return err
 	}
 	_, err = tx.Exec(ctx,
-		`INSERT INTO user_events_outbox (id, event_type, payload)
-		 SELECT uid, $1, jsonb_set($2::jsonb, '{id}', to_jsonb(uid::text))
-		 FROM (SELECT gen_random_uuid() AS uid) t`, eventType, body)
+		`INSERT INTO user_events_outbox (id, event_type, payload, user_id, user_version)
+		 SELECT uid, $1, jsonb_set($2::jsonb, '{id}', to_jsonb(uid::text)), $3, $4
+		 FROM (SELECT gen_random_uuid() AS uid) t`, eventType, body, user.ID, user.Version)
 	return err
+}
+
+// RequeueQuarantined returns every quarantined event to the queue with a
+// fresh retry budget; the operator's recovery path after the cause seen
+// in last_error is fixed. Returns how many rows were requeued.
+func (s *Store) RequeueQuarantined(ctx context.Context) (int, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE user_events_outbox
+		 SET quarantined_at = NULL, attempts = 0, last_error = NULL, lease_until = NULL, leased_by = NULL
+		 WHERE quarantined_at IS NOT NULL`)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 // EnqueueSnapshots writes a snapshot event for every user, in batches;

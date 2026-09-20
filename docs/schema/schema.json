@@ -712,6 +712,18 @@
           "comment": "Last publish error, if any"
         },
         {
+          "name": "lease_until",
+          "type": "timestamp with time zone",
+          "nullable": true,
+          "comment": "Row is being published by leased_by until this time; also the not-before time after a failed attempt"
+        },
+        {
+          "name": "leased_by",
+          "type": "text",
+          "nullable": true,
+          "comment": "Relay replica holding the lease"
+        },
+        {
           "name": "payload",
           "type": "jsonb",
           "nullable": false,
@@ -722,9 +734,36 @@
           "type": "timestamp with time zone",
           "nullable": true,
           "comment": "Broker publish timestamp; NULL while pending"
+        },
+        {
+          "name": "quarantined_at",
+          "type": "timestamp with time zone",
+          "nullable": true,
+          "comment": "Set after the retry budget is exhausted; excluded from publishing until requeued"
+        },
+        {
+          "name": "user_id",
+          "type": "uuid",
+          "nullable": true,
+          "comment": "Subject user; events of one user publish strictly in user_version order across relay replicas"
+        },
+        {
+          "name": "user_version",
+          "type": "bigint",
+          "nullable": true,
+          "comment": "Profile version carried by the payload; the per-user publication order (created_at is transaction start time and can invert it)"
         }
       ],
       "indexes": [
+        {
+          "name": "user_events_outbox_pending_idx",
+          "def": "CREATE INDEX user_events_outbox_pending_idx ON public.user_events_outbox USING btree (created_at, id) WHERE ((published_at IS NULL) AND (quarantined_at IS NULL))",
+          "table": "public.user_events_outbox",
+          "columns": [
+            "created_at",
+            "id"
+          ]
+        },
         {
           "name": "user_events_outbox_pkey",
           "def": "CREATE UNIQUE INDEX user_events_outbox_pkey ON public.user_events_outbox USING btree (id)",
@@ -734,11 +773,30 @@
           ]
         },
         {
-          "name": "user_events_outbox_unpublished_idx",
-          "def": "CREATE INDEX user_events_outbox_unpublished_idx ON public.user_events_outbox USING btree (created_at) WHERE (published_at IS NULL)",
+          "name": "user_events_outbox_published_idx",
+          "def": "CREATE INDEX user_events_outbox_published_idx ON public.user_events_outbox USING btree (published_at) WHERE (published_at IS NOT NULL)",
           "table": "public.user_events_outbox",
           "columns": [
-            "created_at"
+            "published_at"
+          ]
+        },
+        {
+          "name": "user_events_outbox_quarantined_idx",
+          "def": "CREATE INDEX user_events_outbox_quarantined_idx ON public.user_events_outbox USING btree (quarantined_at) WHERE (quarantined_at IS NOT NULL)",
+          "table": "public.user_events_outbox",
+          "columns": [
+            "quarantined_at"
+          ]
+        },
+        {
+          "name": "user_events_outbox_user_pending_idx",
+          "def": "CREATE INDEX user_events_outbox_user_pending_idx ON public.user_events_outbox USING btree (COALESCE(user_id, (((payload -\u003e 'user'::text) -\u003e\u003e 'id'::text))::uuid), COALESCE(user_version, (((payload -\u003e 'user'::text) -\u003e\u003e 'version'::text))::bigint), created_at, id) WHERE ((published_at IS NULL) AND (quarantined_at IS NULL))",
+          "table": "public.user_events_outbox",
+          "columns": [
+            "coalesce",
+            "coalesce1",
+            "created_at",
+            "id"
           ]
         }
       ],

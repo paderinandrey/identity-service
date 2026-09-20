@@ -34,7 +34,31 @@ type env struct {
 	metrics  *fakeRelayMetrics
 }
 
+// newEnv provisions a database, an exchange and a bound queue.
 func newEnv(t *testing.T) *env {
+	e := newEnvUnbound(t)
+	e.bindQueue(t)
+	return e
+}
+
+// bindQueue declares the consumer side: an exclusive queue bound to every
+// user event — the topology consumers own in production.
+func (e *env) bindQueue(t *testing.T) {
+	t.Helper()
+	queue, err := e.channel.QueueDeclare("", false, true, true, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.queue = queue.Name
+	t.Cleanup(func() { _, _ = e.channel.QueueDelete(e.queue, false, false, false) })
+	if err := e.channel.QueueBind(e.queue, "user.#", e.exchange, false, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// newEnvUnbound provisions a database and an exchange with no queue: the
+// state of the world before any consumer has deployed.
+func newEnvUnbound(t *testing.T) *env {
 	t.Helper()
 	ctx := t.Context()
 
@@ -85,32 +109,125 @@ func newEnv(t *testing.T) *env {
 	if err := channel.ExchangeDeclare(e.exchange, "topic", true, false, false, false, nil); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _, _ = channel.QueueDelete(e.queue, false, false, false) })
 	t.Cleanup(func() { _ = channel.ExchangeDelete(e.exchange, false, false) })
-
-	queue, err := channel.QueueDeclare("", false, true, true, false, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.queue = queue.Name
-	if err := channel.QueueBind(e.queue, "user.#", e.exchange, false, nil); err != nil {
-		t.Fatal(err)
-	}
 	return e
 }
 
-type fakeRelayMetrics struct {
+// outboxRow reads the bookkeeping columns of one event.
+func (e *env) outboxRow(t *testing.T, id string) (attempts int, published, quarantined bool, lastError string) {
+	t.Helper()
+	var pub, quar *time.Time
+	var errText *string
+	if err := e.pool.QueryRow(t.Context(),
+		"SELECT attempts, published_at, quarantined_at, last_error FROM user_events_outbox WHERE id = $1", id).
+		Scan(&attempts, &pub, &quar, &errText); err != nil {
+		t.Fatal(err)
+	}
+	if errText != nil {
+		lastError = *errText
+	}
+	return attempts, pub != nil, quar != nil, lastError
+}
+
+// eventIDs returns outbox ids in creation order.
+func (e *env) eventIDs(t *testing.T) []string {
+	t.Helper()
+	rows, err := e.pool.Query(t.Context(), "SELECT id FROM user_events_outbox ORDER BY created_at, id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// fakePublisher records what it was asked to publish and fails the ids
+// in failIDs; the relay's retry and quarantine logic is exercised against
+// the real database without needing the broker to misbehave.
+type fakePublisher struct {
 	mu        sync.Mutex
-	published int
-	errors    int
-	pending   int
+	failIDs   map[string]bool
+	transport bool // when true every publish fails at the transport level
+	published []string
+}
+
+func (p *fakePublisher) Publish(_ context.Context, m events.Message) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.transport {
+		return fmt.Errorf("%w: connection refused", events.ErrTransport)
+	}
+	if p.failIDs[m.ID] {
+		return fmt.Errorf("%w: simulated for %s", events.ErrRejected, m.ID)
+	}
+	p.published = append(p.published, m.ID)
+	return nil
+}
+
+func (p *fakePublisher) setTransport(down bool) {
+	p.mu.Lock()
+	p.transport = down
+	p.mu.Unlock()
+}
+
+func (p *fakePublisher) Close() {}
+
+func (p *fakePublisher) got() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.published...)
+}
+
+func (p *fakePublisher) stopFailing() {
+	p.mu.Lock()
+	p.failIDs = map[string]bool{}
+	p.mu.Unlock()
+}
+
+var fastRetry = events.RetryPolicy{MaxAttempts: 3, BaseBackoff: 10 * time.Millisecond, MaxBackoff: 100 * time.Millisecond}
+
+func contains(ids []string, id string) bool {
+	for _, x := range ids {
+		if x == id {
+			return true
+		}
+	}
+	return false
+}
+
+type fakeRelayMetrics struct {
+	mu          sync.Mutex
+	published   int
+	errors      int
+	unroutable  int
+	pending     int
+	quarantined int
+	oldestAge   float64
 }
 
 func (m *fakeRelayMetrics) Published(n int) { m.mu.Lock(); m.published += n; m.mu.Unlock() }
 func (m *fakeRelayMetrics) PublishError()   { m.mu.Lock(); m.errors++; m.mu.Unlock() }
+func (m *fakeRelayMetrics) Unroutable()     { m.mu.Lock(); m.unroutable++; m.mu.Unlock() }
 func (m *fakeRelayMetrics) PendingSet(n int) {
 	m.mu.Lock()
 	m.pending = n
+	m.mu.Unlock()
+}
+func (m *fakeRelayMetrics) QuarantinedSet(n int) {
+	m.mu.Lock()
+	m.quarantined = n
+	m.mu.Unlock()
+}
+func (m *fakeRelayMetrics) OldestPendingAgeSet(seconds float64) {
+	m.mu.Lock()
+	m.oldestAge = seconds
 	m.mu.Unlock()
 }
 
@@ -120,12 +237,27 @@ func (m *fakeRelayMetrics) snapshot() (int, int, int) {
 	return m.published, m.errors, m.pending
 }
 
+func (m *fakeRelayMetrics) queue() (pending, quarantined int, oldestAge float64, unroutable int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.pending, m.quarantined, m.oldestAge, m.unroutable
+}
+
 func (e *env) runRelay(t *testing.T, url string) (stop func()) {
+	return e.runRelayWith(t, url, func(*events.Relay) {})
+}
+
+// runRelayWith starts a relay after applying tweak (publisher, retry
+// policy, retention). Each call gets its own metrics unless one is set.
+func (e *env) runRelayWith(t *testing.T, url string, tweak func(*events.Relay)) (stop func()) {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	relay := events.NewRelay(e.pool, url, e.exchange, logger)
-	e.metrics = &fakeRelayMetrics{}
+	if e.metrics == nil {
+		e.metrics = &fakeRelayMetrics{}
+	}
 	relay.SetMetrics(e.metrics)
+	tweak(relay)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() {
@@ -268,4 +400,400 @@ func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 func TestMain(m *testing.M) {
 	fmt.Fprintln(os.Stderr, "events integration tests use docker-compose PostgreSQL/RabbitMQ (run `mise run up`)")
 	os.Exit(m.Run())
+}
+
+func TestTwoRelaysKeepPerUserOrder(t *testing.T) {
+	// The spec promises per-user order for any number of relay replicas.
+	// Head-of-line claiming is what makes that true: two relays never hold
+	// events of the same user at the same time.
+	e := newEnv(t)
+	user, err := e.store.CreateUser(t.Context(), "twins@example.com", "V1", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 2; i <= 8; i++ {
+		if _, err := e.store.UpdateUser(t.Context(), user.ID, "twins@example.com", fmt.Sprintf("V%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	stopA := e.runRelay(t, amqpURL)
+	defer stopA()
+	stopB := e.runRelay(t, amqpURL)
+	defer stopB()
+
+	msgs := e.consume(t, 8, 20*time.Second)
+	var prev int64
+	for i, m := range msgs {
+		var payload events.Payload
+		if err := json.Unmarshal(m.Body, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.User.Version <= prev {
+			t.Errorf("message %d: version %d after %d — order broken across replicas", i, payload.User.Version, prev)
+		}
+		prev = payload.User.Version
+	}
+}
+
+func TestExpiredLeaseIsReclaimed(t *testing.T) {
+	e := newEnv(t)
+	if _, err := e.store.CreateUser(t.Context(), "leased@example.com", "Leased", true); err != nil {
+		t.Fatal(err)
+	}
+	id := e.eventIDs(t)[0]
+	// A replica that died mid-batch: the lease is held and in the future.
+	if _, err := e.pool.Exec(t.Context(),
+		"UPDATE user_events_outbox SET lease_until = now() + interval '1 hour', leased_by = 'dead-replica' WHERE id = $1", id); err != nil {
+		t.Fatal(err)
+	}
+
+	stop := e.runRelay(t, amqpURL)
+	defer stop()
+	time.Sleep(1500 * time.Millisecond)
+	if _, published, _, _ := e.outboxRow(t, id); published {
+		t.Fatal("a row leased by another replica must not be published")
+	}
+
+	// The lease expires: the row goes back to the queue.
+	if _, err := e.pool.Exec(t.Context(),
+		"UPDATE user_events_outbox SET lease_until = now() - interval '1 second' WHERE id = $1", id); err != nil {
+		t.Fatal(err)
+	}
+	e.consume(t, 1, 10*time.Second)
+	waitFor(t, 5*time.Second, func() bool { return e.unpublishedCount(t) == 0 })
+}
+
+func TestPoisonEventIsQuarantinedAndDoesNotBlockTheUser(t *testing.T) {
+	e := newEnvUnbound(t)
+	user, err := e.store.CreateUser(t.Context(), "poison@example.com", "V1", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.UpdateUser(t.Context(), user.ID, "poison@example.com", "V2"); err != nil {
+		t.Fatal(err)
+	}
+	ids := e.eventIDs(t)
+	poison, next := ids[0], ids[1]
+
+	pub := &fakePublisher{failIDs: map[string]bool{poison: true}}
+	stop := e.runRelayWith(t, amqpURL, func(r *events.Relay) {
+		r.SetPublisher(pub)
+		r.SetRetryPolicy(fastRetry)
+	})
+	defer stop()
+
+	// The poison row exhausts its budget and is parked; the user's next
+	// event, blocked while the poison row was pending, then flows.
+	waitFor(t, 10*time.Second, func() bool {
+		_, _, quarantined, _ := e.outboxRow(t, poison)
+		return quarantined
+	})
+	attempts, published, _, lastError := e.outboxRow(t, poison)
+	if published || attempts != fastRetry.MaxAttempts || lastError == "" {
+		t.Errorf("poison row: attempts=%d published=%v last_error=%q", attempts, published, lastError)
+	}
+	waitFor(t, 10*time.Second, func() bool { return contains(pub.got(), next) })
+	if contains(pub.got(), poison) {
+		t.Error("the poison row must never have been published")
+	}
+	waitFor(t, 5*time.Second, func() bool {
+		_, quarantined, _, _ := e.metrics.queue()
+		return quarantined == 1
+	})
+
+	// Recovery: the operator fixes the cause and requeues.
+	pub.stopFailing()
+	n, err := e.store.RequeueQuarantined(t.Context())
+	if err != nil || n != 1 {
+		t.Fatalf("RequeueQuarantined = %d, %v; want 1", n, err)
+	}
+	waitFor(t, 10*time.Second, func() bool {
+		_, published, _, _ := e.outboxRow(t, poison)
+		return published
+	})
+	attempts, _, quarantined, _ := e.outboxRow(t, poison)
+	if quarantined || attempts != 0 {
+		t.Errorf("after requeue: attempts=%d quarantined=%v; want 0/false", attempts, quarantined)
+	}
+}
+
+func TestUnroutableEventWaitsForAConsumer(t *testing.T) {
+	// No queue is bound yet — identity deployed before GSH/DFM. The broker
+	// returns the mandatory publish; the event must wait, not vanish and
+	// not burn its retry budget.
+	e := newEnvUnbound(t)
+	if _, err := e.store.CreateUser(t.Context(), "early@example.com", "Early", true); err != nil {
+		t.Fatal(err)
+	}
+	id := e.eventIDs(t)[0]
+
+	stop := e.runRelayWith(t, amqpURL, func(r *events.Relay) {
+		r.SetRetryPolicy(events.RetryPolicy{MaxAttempts: 3, BaseBackoff: 10 * time.Millisecond, MaxBackoff: 300 * time.Millisecond})
+	})
+	defer stop()
+
+	waitFor(t, 5*time.Second, func() bool {
+		_, _, _, unroutable := e.metrics.queue()
+		return unroutable >= 1
+	})
+	time.Sleep(700 * time.Millisecond) // a couple more rounds at the max backoff
+	attempts, published, quarantined, _ := e.outboxRow(t, id)
+	if published || quarantined || attempts != 0 {
+		t.Fatalf("unroutable event: published=%v quarantined=%v attempts=%d; want pending with 0 attempts", published, quarantined, attempts)
+	}
+
+	// The consumer arrives: the event is delivered on the next round.
+	e.bindQueue(t)
+	e.consume(t, 1, 10*time.Second)
+	waitFor(t, 5*time.Second, func() bool { return e.unpublishedCount(t) == 0 })
+}
+
+func TestRetentionTrimsOnlyOldPublishedEvents(t *testing.T) {
+	e := newEnvUnbound(t)
+	user, err := e.store.CreateUser(t.Context(), "keep@example.com", "Keep", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Four rows by hand: old published, recent published, pending, quarantined.
+	for _, row := range []struct{ published, quarantined string }{
+		{"now() - interval '40 days'", "NULL"},
+		{"now() - interval '1 day'", "NULL"},
+		{"NULL", "NULL"},
+		{"NULL", "now()"},
+	} {
+		if _, err := e.pool.Exec(t.Context(), fmt.Sprintf(
+			`INSERT INTO user_events_outbox (event_type, payload, user_id, published_at, quarantined_at)
+			 VALUES ('identity.user.snapshot', '{}'::jsonb, $1, %s, %s)`, row.published, row.quarantined), user.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := len(e.eventIDs(t)) // 4 + the created event
+
+	stop := e.runRelayWith(t, amqpURL, func(r *events.Relay) {
+		r.SetPublisher(&fakePublisher{})
+		r.SetRetention(30 * 24 * time.Hour)
+	})
+	time.Sleep(500 * time.Millisecond)
+	stop()
+
+	var oldLeft, recentLeft, quarantinedLeft int
+	if err := e.pool.QueryRow(t.Context(),
+		`SELECT count(*) FILTER (WHERE published_at < now() - interval '30 days'),
+		        count(*) FILTER (WHERE published_at >= now() - interval '30 days'),
+		        count(*) FILTER (WHERE quarantined_at IS NOT NULL)
+		 FROM user_events_outbox`).Scan(&oldLeft, &recentLeft, &quarantinedLeft); err != nil {
+		t.Fatal(err)
+	}
+	if oldLeft != 0 {
+		t.Errorf("old published rows left = %d, want 0", oldLeft)
+	}
+	if quarantinedLeft != 1 {
+		t.Errorf("quarantined rows left = %d, want 1 (never trimmed)", quarantinedLeft)
+	}
+	// Everything the relay published this run counts as recent; the
+	// hand-made recent row is among them.
+	if recentLeft < 1 || len(e.eventIDs(t)) != before-1 {
+		t.Errorf("recent published rows = %d, rows total %d (was %d)", recentLeft, len(e.eventIDs(t)), before)
+	}
+}
+
+func TestGaugesReflectTheBacklogWhileBrokerIsDown(t *testing.T) {
+	e := newEnvUnbound(t)
+	for _, email := range []string{"g1@example.com", "g2@example.com"} {
+		if _, err := e.store.CreateUser(t.Context(), email, "G", true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stop := e.runRelay(t, "amqp://identity:identity@localhost:1/")
+	defer stop()
+
+	waitFor(t, 5*time.Second, func() bool {
+		pending, _, oldest, _ := e.metrics.queue()
+		return pending == 2 && oldest > 0
+	})
+	if e.unpublishedCount(t) != 2 {
+		t.Error("nothing must be published while the broker is unreachable")
+	}
+}
+
+func TestBrokerOutageSpendsNoRetryBudget(t *testing.T) {
+	// Codex review, PR #6: a nine-minute outage must not quarantine valid
+	// events. Transport failures release the lease and charge nothing.
+	e := newEnvUnbound(t)
+	if _, err := e.store.CreateUser(t.Context(), "outage2@example.com", "Outage", true); err != nil {
+		t.Fatal(err)
+	}
+	id := e.eventIDs(t)[0]
+
+	pub := &fakePublisher{transport: true}
+	stop := e.runRelayWith(t, amqpURL, func(r *events.Relay) {
+		r.SetPublisher(pub)
+		r.SetRetryPolicy(fastRetry) // 3 attempts would quarantine within a second if charged
+	})
+	defer stop()
+
+	time.Sleep(1500 * time.Millisecond)
+	attempts, published, quarantined, _ := e.outboxRow(t, id)
+	if published || quarantined || attempts != 0 {
+		t.Fatalf("during outage: published=%v quarantined=%v attempts=%d; want pending with 0 attempts", published, quarantined, attempts)
+	}
+	var leased bool
+	if err := e.pool.QueryRow(t.Context(),
+		"SELECT lease_until IS NOT NULL AND lease_until > now() FROM user_events_outbox WHERE id = $1", id).Scan(&leased); err != nil {
+		t.Fatal(err)
+	}
+	if leased {
+		t.Error("a row that failed at the transport level must have its lease released")
+	}
+
+	// Broker back: the event publishes with its budget intact.
+	pub.setTransport(false)
+	waitFor(t, 10*time.Second, func() bool {
+		_, published, _, _ := e.outboxRow(t, id)
+		return published
+	})
+}
+
+func TestRowsWrittenWithoutUserIDKeepPerUserOrder(t *testing.T) {
+	// A replica of the previous release inserts rows with user_id and
+	// user_version NULL during a rolling update. They are ordered from
+	// the payload, never repaired: one such row with a lower version must
+	// still publish before a fully populated row with a higher one.
+	e := newEnvUnbound(t)
+	user, err := e.store.CreateUser(t.Context(), "legacy@example.com", "V1", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.pool.Exec(t.Context(),
+		"UPDATE user_events_outbox SET user_id = NULL, user_version = NULL WHERE user_id = $1", user.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.store.UpdateUser(t.Context(), user.ID, "legacy@example.com", "V2"); err != nil {
+		t.Fatal(err)
+	}
+
+	pub := &fakePublisher{}
+	stop := e.runRelayWith(t, amqpURL, func(r *events.Relay) { r.SetPublisher(pub) })
+	defer stop()
+	waitFor(t, 10*time.Second, func() bool { return e.unpublishedCount(t) == 0 })
+
+	var versions []int64
+	for _, id := range pub.got() {
+		var v int64
+		if err := e.pool.QueryRow(t.Context(),
+			"SELECT (payload -> 'user' ->> 'version')::bigint FROM user_events_outbox WHERE id = $1", id).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		versions = append(versions, v)
+	}
+	if len(versions) != 2 || versions[0] >= versions[1] {
+		t.Errorf("published versions %v, want the legacy row (v1) before the new one (v2)", versions)
+	}
+	var stillNull int
+	if err := e.pool.QueryRow(t.Context(),
+		"SELECT count(*) FROM user_events_outbox WHERE user_id IS NULL").Scan(&stillNull); err != nil {
+		t.Fatal(err)
+	}
+	if stillNull != 1 {
+		t.Errorf("legacy rows are left as written (no repair pass): NULL user_id rows = %d, want 1", stillNull)
+	}
+}
+
+// created_at is the transaction start time: two events of one
+// transaction share it, and a transaction that started earlier but took
+// the user row lock later carries the higher version. The head of a
+// user's line is therefore the lowest version, whatever the timestamps
+// and ids say (Codex review, PR #6).
+func TestPerUserOrderFollowsVersionNotTimestamp(t *testing.T) {
+	e := newEnvUnbound(t)
+	user, err := e.store.CreateUser(t.Context(), "versioned@example.com", "V1", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	insert := func(id string, version int64, createdAt time.Time) {
+		t.Helper()
+		u := *user
+		u.Version = version
+		body, _ := json.Marshal(events.NewPayload(events.TypeUpdated, &u))
+		if _, err := e.pool.Exec(t.Context(),
+			`INSERT INTO user_events_outbox (id, event_type, payload, user_id, user_version, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6)`, id, events.TypeUpdated, body, user.ID, version, createdAt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Same transaction: same created_at, the lower id carries the higher version.
+	insert("aaaaaaaa-0000-4000-8000-000000000003", 3, base.Add(time.Second))
+	insert("bbbbbbbb-0000-4000-8000-000000000002", 2, base.Add(time.Second))
+	// Different transactions: the later version has the earlier timestamp.
+	insert("cccccccc-0000-4000-8000-000000000005", 5, base.Add(2*time.Second))
+	insert("dddddddd-0000-4000-8000-000000000004", 4, base.Add(3*time.Second))
+
+	pub := &fakePublisher{}
+	stop := e.runRelayWith(t, amqpURL, func(r *events.Relay) { r.SetPublisher(pub) })
+	defer stop()
+	waitFor(t, 10*time.Second, func() bool { return e.unpublishedCount(t) == 0 })
+
+	var versions []int64
+	for _, id := range pub.got() {
+		var v int64
+		if err := e.pool.QueryRow(t.Context(), "SELECT user_version FROM user_events_outbox WHERE id = $1", id).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		versions = append(versions, v)
+	}
+	for i := 1; i < len(versions); i++ {
+		if versions[i] <= versions[i-1] {
+			t.Fatalf("published versions %v: not increasing at %d", versions, i)
+		}
+	}
+	if len(versions) != 5 {
+		t.Errorf("published %d events, want 5", len(versions))
+	}
+}
+
+// blockingPublisher parks every publish until its context is cancelled,
+// which is what a broker that stopped answering looks like at SIGTERM.
+type blockingPublisher struct {
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (p *blockingPublisher) Publish(ctx context.Context, _ events.Message) error {
+	p.once.Do(func() { close(p.entered) })
+	<-ctx.Done()
+	return fmt.Errorf("%w: %w", events.ErrTransport, ctx.Err())
+}
+
+func (p *blockingPublisher) Close() {}
+
+// A batch interrupted by shutdown must not keep its leases: settle runs
+// on a detached context so the rows are released at once instead of
+// after the full lease (Codex review, PR #6).
+func TestShutdownReleasesClaimedLeases(t *testing.T) {
+	e := newEnvUnbound(t)
+	if _, err := e.store.CreateUser(t.Context(), "interrupted@example.com", "V1", true); err != nil {
+		t.Fatal(err)
+	}
+	pub := &blockingPublisher{entered: make(chan struct{})}
+	stop := e.runRelayWith(t, amqpURL, func(r *events.Relay) { r.SetPublisher(pub) })
+	select {
+	case <-pub.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("relay never claimed the batch")
+	}
+	stop() // cancels the context and waits for Run to return
+
+	var leased int
+	if err := e.pool.QueryRow(context.Background(),
+		"SELECT count(*) FROM user_events_outbox WHERE leased_by IS NOT NULL OR lease_until IS NOT NULL").Scan(&leased); err != nil {
+		t.Fatal(err)
+	}
+	if leased != 0 {
+		t.Errorf("%d row(s) still leased after shutdown; the batch was not settled", leased)
+	}
+	if e.unpublishedCount(t) != 1 {
+		t.Errorf("unpublished = %d, want 1 (nothing was confirmed)", e.unpublishedCount(t))
+	}
 }
