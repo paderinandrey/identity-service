@@ -370,8 +370,14 @@ func importAssignments(ctx context.Context, cfg config.Config, args []string) er
 	store := postgres.NewStore(pool)
 	accessStore := postgres.NewAccessStore(pool)
 
-	ok, failed := 0, 0
-	for _, entry := range imp.Assignments {
+	// Resolve every entry before writing anything: the file's textual keys
+	// are unique, but one user listed by id and again by email would be
+	// two transactions, and a failure in the second would leave the first
+	// committed — so such a file is refused up front (Codex review, PR #14).
+	users := make([]*identity.User, len(imp.Assignments))
+	resolveErr := make([]error, len(imp.Assignments))
+	seen := map[string]int{}
+	for i, entry := range imp.Assignments {
 		var user *identity.User
 		if entry.ID != "" {
 			user, err = store.FindByID(ctx, entry.ID)
@@ -379,11 +385,25 @@ func importAssignments(ctx context.Context, cfg config.Config, args []string) er
 			user, err = store.FindActiveByEmail(ctx, identity.NormalizeEmail(entry.Email))
 		}
 		if err != nil {
-			fmt.Printf("FAIL %s: %v\n", entry.Key(), err)
+			resolveErr[i] = err
+			continue
+		}
+		if prev, dup := seen[user.ID]; dup {
+			return fmt.Errorf("import-assignments: entries %d (%s) and %d (%s) are the same user %s; merge them and rerun — nothing was written",
+				prev+1, imp.Assignments[prev].Key(), i+1, entry.Key(), user.ID)
+		}
+		seen[user.ID] = i
+		users[i] = user
+	}
+
+	ok, failed := 0, 0
+	for i, entry := range imp.Assignments {
+		if resolveErr[i] != nil {
+			fmt.Printf("FAIL %s: %v\n", entry.Key(), resolveErr[i])
 			failed++
 			continue
 		}
-		granted, err := accessStore.GrantRoles(ctx, cliActor, user.ID, entry.Roles, *dryRun)
+		granted, err := accessStore.GrantRoles(ctx, cliActor, users[i].ID, entry.Roles, *dryRun)
 		if err != nil {
 			fmt.Printf("FAIL %s: %v\n", entry.Key(), err)
 			failed++
