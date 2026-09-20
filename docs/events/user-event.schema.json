@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/paderinandrey/identity-service/docs/events/user-event.schema.json",
+  "title": "identity-service user event",
+  "description": "Body of every message published to the identity.events exchange. Each event carries the full user snapshot; consumers apply it by version. Unknown properties are allowed on purpose: a schemaVersion-1 producer may add optional fields, and a consumer validating against an older copy of this schema must keep accepting events. The producer's own tests forbid undocumented fields.",
+  "type": "object",
+  "required": ["id", "type", "schemaVersion", "occurredAt", "user"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Stable event id; equals the AMQP message_id. Deduplicate by it."
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^identity\\.user\\.[a-z]+$",
+      "description": "Event type; equals the AMQP type property. The routing key is the type without the identity. prefix. Known values: identity.user.created, updated, deactivated, reactivated, snapshot. Deliberately not an enum: a consumer must apply an unknown type as a snapshot, so the schema must not reject one."
+    },
+    "schemaVersion": {
+      "const": 1,
+      "description": "Version of this schema. Consumers reject bodies with an unknown value."
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the change was recorded, UTC."
+    },
+    "user": {
+      "type": "object",
+      "required": ["id", "email", "name", "active", "version"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Global application user id, stable across services."
+        },
+        "email": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Mutable attribute, never an identity key."
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name."
+        },
+        "active": {
+          "type": "boolean",
+          "description": "false once deactivated through provisioning; sessions are revoked at that moment."
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Monotonic profile version. Apply the snapshot only if this is greater than the version already applied for the user."
+        }
+      }
+    }
+  }
+}

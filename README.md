@@ -267,19 +267,17 @@ relay inside `serve` publishes them to the durable topic exchange
 `identity.events` with publisher confirms. Routing keys: `user.created`,
 `user.updated`, `user.deactivated`, `user.reactivated`, `user.snapshot`.
 
-Message body (`schemaVersion` 1):
-
-```json
-{"id": "…", "type": "identity.user.updated", "schemaVersion": 1,
- "occurredAt": "2026-09-10T00:00:00Z",
- "user": {"id": "…", "email": "…", "name": "…", "active": true, "version": 4}}
-```
-
-`user.version` grows with every change — consumers must drop updates with a
-version not greater than the one already applied, and deduplicate by the
-AMQP `message_id` (equal to `id`). Delivery is at-least-once; events survive
-broker outages and service restarts in the outbox. `replay-users` enqueues
-`user.snapshot` events for every user to bootstrap or repair a projection.
+The consumer contract — body schema, AMQP properties, delivery guarantees,
+what a consumer must do (deduplicate by `message_id`, apply the snapshot
+only when `user.version` is greater than the one already applied, treat
+every type as a full snapshot) and how to bootstrap or repair a projection
+with `replay-users` — lives in [`docs/events/user-events.md`](docs/events/user-events.md).
+The JSON Schema and the per-type examples next to it are generated from the
+service's own payload code and checked by `go test ./internal/events`, so
+they cannot drift from what is published. `dev/stub-consumer/` is a
+reference consumer that follows the contract line by line and runs on the
+local stand. Delivery is at-least-once; events survive broker outages and
+service restarts in the outbox.
 The broker is deliberately excluded from `/readyz`.
 
 Rolling out the lease-based relay onto an environment that already runs

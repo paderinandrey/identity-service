@@ -25,7 +25,8 @@ step "Образы"
 docker build -q -t identity-service:dev . >/dev/null
 docker build -q -t identity-service-keycloak:latest dev/keycloak >/dev/null
 docker build -q -t stub-subgraph:dev dev/stub-subgraph >/dev/null
-echo "identity-service:dev, identity-service-keycloak:latest, stub-subgraph:dev собраны"
+docker build -q -t stub-consumer:dev dev/stub-consumer >/dev/null
+echo "identity-service:dev, identity-service-keycloak:latest, stub-subgraph:dev, stub-consumer:dev собраны"
 
 step "Envoy Gateway"
 if ! kubectl get ns envoy-gateway-system >/dev/null 2>&1; then
@@ -50,7 +51,7 @@ helm upgrade --install "$RELEASE" "$CHART" -f "$CHART/values-local.yaml" -n "$NS
 # ключами. `rollout status` ждёт именно новую ревизию.
 kubectl rollout restart "deploy/$RELEASE-identity-service-keycloak" -n "$NS" >/dev/null 2>&1 || true
 kubectl rollout status "deploy/$RELEASE-identity-service-keycloak" -n "$NS" --timeout=300s >/dev/null
-for dep in postgresql redis rabbitmq keycloak echo stub-subgraph; do
+for dep in postgresql redis rabbitmq keycloak echo stub-subgraph stub-consumer; do
   kubectl wait --for=condition=Available "deploy/$RELEASE-identity-service-$dep" -n "$NS" --timeout=300s >/dev/null
   echo "  $dep готов"
 done

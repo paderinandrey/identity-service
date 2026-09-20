@@ -59,6 +59,20 @@ jobs:
           go-version-file: go.mod
       - run: go test -race ./...
 
+  # The reference consumer is its own module; without this job it would
+  # rot silently while the contract document keeps pointing at it.
+  stub-consumer:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dev/stub-consumer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: dev/stub-consumer/go.mod
+      - run: go vet ./... && go test -race ./...
+
   schema-docs:
     runs-on: ubuntu-latest
     services:
