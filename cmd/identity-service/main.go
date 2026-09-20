@@ -367,58 +367,25 @@ func importAssignments(ctx context.Context, cfg config.Config, args []string) er
 		return err
 	}
 	defer pool.Close()
-	store := postgres.NewStore(pool)
-	accessStore := postgres.NewAccessStore(pool)
 
-	// Resolve every entry before writing anything: the file's textual keys
-	// are unique, but one user listed by id and again by email would be
-	// two transactions, and a failure in the second would leave the first
-	// committed — so such a file is refused up front (Codex review, PR #14).
-	users := make([]*identity.User, len(imp.Assignments))
-	resolveErr := make([]error, len(imp.Assignments))
-	seen := map[string]int{}
-	for i, entry := range imp.Assignments {
-		var user *identity.User
-		if entry.ID != "" {
-			user, err = store.FindByID(ctx, entry.ID)
-		} else {
-			user, err = store.FindActiveByEmail(ctx, identity.NormalizeEmail(entry.Email))
-		}
-		if err != nil {
-			resolveErr[i] = err
-			continue
-		}
-		if prev, dup := seen[user.ID]; dup {
-			return fmt.Errorf("import-assignments: entries %d (%s) and %d (%s) are the same user %s; merge them and rerun — nothing was written",
-				prev+1, imp.Assignments[prev].Key(), i+1, entry.Key(), user.ID)
-		}
-		seen[user.ID] = i
-		users[i] = user
+	report, err := access.Import(ctx, postgres.NewStore(pool), postgres.NewAccessStore(pool), cliActor, imp, *dryRun)
+	if err != nil {
+		return fmt.Errorf("import-assignments: %w", err)
 	}
-
-	ok, failed := 0, 0
-	for i, entry := range imp.Assignments {
-		if resolveErr[i] != nil {
-			fmt.Printf("FAIL %s: %v\n", entry.Key(), resolveErr[i])
-			failed++
+	for _, r := range report.Results {
+		if r.Err != nil {
+			fmt.Printf("FAIL %s: %v\n", r.Key, r.Err)
 			continue
 		}
-		granted, err := accessStore.GrantRoles(ctx, cliActor, users[i].ID, entry.Roles, *dryRun)
-		if err != nil {
-			fmt.Printf("FAIL %s: %v\n", entry.Key(), err)
-			failed++
-			continue
-		}
-		fmt.Printf("ok %s: granted %d, already %d\n", entry.Key(), granted, len(entry.Roles)-granted)
-		ok++
+		fmt.Printf("ok %s: granted %d, already %d\n", r.Key, r.Granted, r.Already)
 	}
 	suffix := ""
-	if *dryRun {
+	if report.DryRun {
 		suffix = " (dry-run, nothing written)"
 	}
-	fmt.Printf("import-assignments: %d ok, %d failed%s\n", ok, failed, suffix)
-	if failed > 0 {
-		return fmt.Errorf("import-assignments: %d entry(ies) failed; fix the file and rerun — applied entries are idempotent", failed)
+	fmt.Printf("import-assignments: %d ok, %d failed%s\n", report.OK, report.Failed, suffix)
+	if report.Failed > 0 {
+		return fmt.Errorf("import-assignments: %d entry(ies) failed; fix the file and rerun — applied entries are idempotent", report.Failed)
 	}
 	return nil
 }

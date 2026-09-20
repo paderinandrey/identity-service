@@ -1,8 +1,12 @@
 package access
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/paderinandrey/identity-service/internal/identity"
 )
 
 func TestImportFileValidate(t *testing.T) {
@@ -32,5 +36,102 @@ func TestImportFileValidate(t *testing.T) {
 				t.Errorf("Validate() = %v, want error containing %q", err, tt.want)
 			}
 		})
+	}
+}
+
+type fakeImportUsers map[string]*identity.User // key: id or email
+
+func (f fakeImportUsers) FindByID(_ context.Context, id string) (*identity.User, error) {
+	if u, ok := f[id]; ok {
+		return u, nil
+	}
+	return nil, identity.ErrUserNotFound
+}
+
+func (f fakeImportUsers) FindActiveByEmail(_ context.Context, email string) (*identity.User, error) {
+	if u, ok := f[email]; ok && u.Active {
+		return u, nil
+	}
+	return nil, identity.ErrUserNotFound
+}
+
+type fakeGranter struct {
+	calls   []string // "userID:ref,ref:dry"
+	held    map[string]map[string]bool
+	unknown map[string]bool
+}
+
+func (g *fakeGranter) GrantRoles(_ context.Context, _, userID string, refs []string, dryRun bool) (int, error) {
+	g.calls = append(g.calls, fmt.Sprintf("%s:%s:%v", userID, strings.Join(refs, ","), dryRun))
+	for _, ref := range refs {
+		if g.unknown[ref] {
+			return 0, fmt.Errorf("%w: %s", ErrRoleNotFound, ref)
+		}
+	}
+	granted := 0
+	for _, ref := range refs {
+		if g.held[userID] == nil {
+			g.held[userID] = map[string]bool{}
+		}
+		if !g.held[userID][ref] {
+			granted++
+			if !dryRun {
+				g.held[userID][ref] = true
+			}
+		}
+	}
+	return granted, nil
+}
+
+func importFixtures() (fakeImportUsers, *fakeGranter) {
+	ada := &identity.User{ID: "0f2b7c1a-3d4e-4f5a-8b6c-7d8e9f0a1b2c", Email: "ada@example.com", Active: true}
+	bob := &identity.User{ID: "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", Email: "bob@example.com", Active: true}
+	users := fakeImportUsers{ada.ID: ada, ada.Email: ada, bob.ID: bob, bob.Email: bob}
+	return users, &fakeGranter{held: map[string]map[string]bool{}, unknown: map[string]bool{"gsh/ghost": true}}
+}
+
+func TestImportRefusesTwoEntriesForOneUser(t *testing.T) {
+	users, granter := importFixtures()
+	file := ImportFile{Assignments: []ImportEntry{
+		{ID: "0f2b7c1a-3d4e-4f5a-8b6c-7d8e9f0a1b2c", Roles: []string{"gsh/observer"}},
+		{Email: "ada@example.com", Roles: []string{"gsh/ghost"}},
+	}}
+	_, err := Import(context.Background(), users, granter, "cli", file, false)
+	if err == nil || !strings.Contains(err.Error(), "same user") {
+		t.Fatalf("Import() = %v, want same-user refusal", err)
+	}
+	if len(granter.calls) != 0 {
+		t.Errorf("grants were attempted before the refusal: %v", granter.calls)
+	}
+}
+
+func TestImportAppliesEntriesIndependently(t *testing.T) {
+	users, granter := importFixtures()
+	file := ImportFile{Assignments: []ImportEntry{
+		{Email: "ada@example.com", Roles: []string{"gsh/observer", "gsh/ghost"}},
+		{Email: "nobody@example.com", Roles: []string{"gsh/observer"}},
+		{Email: "bob@example.com", Roles: []string{"gsh/observer", "gsh/operator"}},
+	}}
+	report, err := Import(context.Background(), users, granter, "cli", file, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.OK != 1 || report.Failed != 2 || len(report.Results) != 3 {
+		t.Fatalf("report = %+v", report)
+	}
+	if report.Results[0].Err == nil || report.Results[1].Err == nil || report.Results[2].Err != nil {
+		t.Errorf("per-entry outcomes = %+v", report.Results)
+	}
+	if got := report.Results[2]; got.Granted != 2 || got.Already != 0 {
+		t.Errorf("bob = %+v, want granted 2", got)
+	}
+
+	// Rerun: idempotent, and now a dry run that must not persist.
+	again, _ := Import(context.Background(), users, granter, "cli", ImportFile{Assignments: file.Assignments[2:]}, true)
+	if r := again.Results[0]; r.Granted != 0 || r.Already != 2 || !again.DryRun {
+		t.Errorf("rerun = %+v, want already 2 in dry-run", r)
+	}
+	if last := granter.calls[len(granter.calls)-1]; !strings.HasSuffix(last, ":true") {
+		t.Errorf("dry-run flag not passed through: %s", last)
 	}
 }

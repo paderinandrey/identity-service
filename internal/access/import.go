@@ -1,8 +1,11 @@
 package access
 
 import (
+	"context"
 	"fmt"
 	"strings"
+
+	"github.com/paderinandrey/identity-service/internal/identity"
 )
 
 // ImportFile is the bootstrap file of role assignments: one entry per
@@ -58,4 +61,83 @@ func (f ImportFile) Validate() error {
 		seen[e.Key()] = n
 	}
 	return nil
+}
+
+// ImportUsers resolves the users an import file names; the CLI wires the
+// PostgreSQL store, tests a map.
+type ImportUsers interface {
+	FindByID(ctx context.Context, id string) (*identity.User, error)
+	FindActiveByEmail(ctx context.Context, email string) (*identity.User, error)
+}
+
+// ImportGranter applies one entry's roles atomically; see
+// postgres.AccessStore.GrantRoles.
+type ImportGranter interface {
+	GrantRoles(ctx context.Context, actor, userID string, refs []string, dryRun bool) (granted int, err error)
+}
+
+// ImportResult is one entry's outcome.
+type ImportResult struct {
+	Key     string
+	Granted int
+	Already int
+	Err     error // nil when the entry was applied
+}
+
+// ImportReport is what the CLI renders.
+type ImportReport struct {
+	Results []ImportResult
+	OK      int
+	Failed  int
+	DryRun  bool
+}
+
+// Import applies a validated file. Every entry is resolved before anything
+// is written: two entries resolving to one user (by id and by email, say)
+// would be two transactions with the second able to fail after the first
+// committed, so such a file is refused with nothing written. An unknown
+// user or role fails only its own entry; the rest still apply, and the
+// report says which. Idempotent: rerunning the same file grants nothing.
+func Import(ctx context.Context, users ImportUsers, granter ImportGranter, actor string, file ImportFile, dryRun bool) (ImportReport, error) {
+	if err := file.Validate(); err != nil {
+		return ImportReport{}, err
+	}
+	resolved := make([]*identity.User, len(file.Assignments))
+	resolveErr := make([]error, len(file.Assignments))
+	seen := map[string]int{}
+	for i, entry := range file.Assignments {
+		var user *identity.User
+		var err error
+		if entry.ID != "" {
+			user, err = users.FindByID(ctx, entry.ID)
+		} else {
+			user, err = users.FindActiveByEmail(ctx, identity.NormalizeEmail(entry.Email))
+		}
+		if err != nil {
+			resolveErr[i] = err
+			continue
+		}
+		if prev, dup := seen[user.ID]; dup {
+			return ImportReport{}, fmt.Errorf("import: entries %d (%s) and %d (%s) are the same user %s; merge them and rerun — nothing was written",
+				prev+1, file.Assignments[prev].Key(), i+1, entry.Key(), user.ID)
+		}
+		seen[user.ID] = i
+		resolved[i] = user
+	}
+
+	report := ImportReport{DryRun: dryRun}
+	for i, entry := range file.Assignments {
+		res := ImportResult{Key: entry.Key(), Err: resolveErr[i]}
+		if res.Err == nil {
+			granted, err := granter.GrantRoles(ctx, actor, resolved[i].ID, entry.Roles, dryRun)
+			res.Granted, res.Already, res.Err = granted, len(entry.Roles)-granted, err
+		}
+		if res.Err != nil {
+			report.Failed++
+		} else {
+			report.OK++
+		}
+		report.Results = append(report.Results, res)
+	}
+	return report, nil
 }
