@@ -28,6 +28,10 @@ config:
   APP_ENV: production
   LOG_LEVEL: info
   LISTEN_ADDR: ":8080"
+  # Internal zone: session validation for ext-auth, metrics, e2e login.
+  # A separate port so the Service and the NetworkPolicy can tell the
+  # zones apart; never routed from outside.
+  INTERNAL_LISTEN_ADDR: ":8081"
   SHUTDOWN_TIMEOUT: 20s
 
 # Name of an existing Secret with the sensitive environment variables.
@@ -39,6 +43,10 @@ service:
   type: ClusterIP
   port: 8080
   targetPort: 8080
+  # Must match config.INTERNAL_LISTEN_ADDR. ext-auth and the ServiceMonitor
+  # use this port; HTTPRoutes never do.
+  internalPort: 8081
+  internalTargetPort: 8081
 
 strategy:
   type: RollingUpdate
@@ -143,6 +151,30 @@ gateway:
       - X-Identity-User-Id
       - X-Identity-Email
       - X-Identity-Permissions
+
+# Ingress isolation of the two zones. The public port accepts traffic
+# from the entry proxy's namespace and from `public.extraFrom` — put the
+# GraphQL Router there, or federation stops at once (the router calls
+# this subgraph directly). The internal port accepts ext-auth from the
+# proxy namespace, scrapes from `monitoringNamespace` and whatever is
+# listed in `internal.extraFrom`. Egress is deliberately not restricted:
+# dependency addresses are a property of the environment, not the chart.
+networkPolicy:
+  enabled: true
+  # Namespace of the Envoy proxies, matched by kubernetes.io/metadata.name.
+  gatewayNamespace: envoy-gateway-system
+  # Namespace of the Prometheus that scrapes /internal/metrics; empty
+  # means no scrape rule (ServiceMonitor is off by default too).
+  monitoringNamespace: ""
+  public:
+    # Extra NetworkPolicyPeer entries for the public port.
+    extraFrom: []
+    #  - podSelector:
+    #      matchLabels:
+    #        app.kubernetes.io/name: router
+  internal:
+    # Extra NetworkPolicyPeer entries for the internal port.
+    extraFrom: []
 
 nodeSelector: {}
 tolerations: []

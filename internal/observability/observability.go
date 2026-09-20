@@ -41,6 +41,8 @@ type Observability struct {
 	scimOps           *prometheus.CounterVec
 	revocationErr     prometheus.Counter
 	cacheRequests     *prometheus.CounterVec
+	cacheEntries      *prometheus.GaugeVec
+	cacheEvictions    *prometheus.CounterVec
 }
 
 // Init configures Sentry (when a DSN is set) and builds the metrics
@@ -113,9 +115,17 @@ func Init(cfg Config) (*Observability, error) {
 		Name: "cache_requests_total",
 		Help: "Cache lookups by cache name and result.",
 	}, []string{"cache", "result"})
+	o.cacheEntries = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "cache_entries",
+		Help: "Entries currently held by a lookup cache.",
+	}, []string{"cache"})
+	o.cacheEvictions = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "cache_evictions_total",
+		Help: "Entries pushed out of a lookup cache by its capacity.",
+	}, []string{"cache"})
 	o.registry.MustRegister(o.httpDuration, o.httpTotal, o.outboxPending,
 		o.outboxQuarantined, o.outboxOldestAge, o.published, o.publishErrors, o.unroutable,
-		o.signIns, o.scimOps, o.revocationErr, o.cacheRequests)
+		o.signIns, o.scimOps, o.revocationErr, o.cacheRequests, o.cacheEntries, o.cacheEvictions)
 
 	return o, nil
 }

@@ -17,9 +17,11 @@ spec:
     headersToExtAuth:
       {{- toYaml .Values.gateway.extAuth.headersToExtAuth | nindent 6 }}
     http:
+      # Validation lives in the internal zone; the public port does not
+      # know the route at all.
       backendRefs:
         - name: {{ $fullName }}
-          port: {{ .Values.service.port }}
+          port: {{ .Values.service.internalPort }}
       path: {{ .Values.gateway.extAuth.path }}
       headersToBackend:
         {{- toYaml .Values.gateway.extAuth.headersToBackend | nindent 8 }}

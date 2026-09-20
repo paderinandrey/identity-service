@@ -94,7 +94,7 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	defer obs.Shutdown()
 	logger = slog.New(obs.LogHandler(logger.Handler()))
 
-	logger.Info("starting identity-service", "env", cfg.AppEnv, "addr", cfg.ListenAddr)
+	logger.Info("starting identity-service", "env", cfg.AppEnv, "addr", cfg.ListenAddr, "internal_addr", cfg.InternalListenAddr)
 
 	pool, err := postgres.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -120,9 +120,9 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}, logger)
 
 	accessStore := postgres.NewAccessStore(pool)
-	userCache := identity.NewUserCache(store, cfg.UserRevocationDelay)
+	userCache := identity.NewUserCache(store, cfg.UserRevocationDelay, cfg.CacheMaxEntries)
 	userCache.SetMetrics(obs.Cache("user"))
-	permsCache := access.NewPermissionsCache(accessStore, cfg.PermissionsCacheTTL)
+	permsCache := access.NewPermissionsCache(accessStore, cfg.PermissionsCacheTTL, cfg.CacheMaxEntries)
 	permsCache.SetMetrics(obs.Cache("permissions"))
 	users := &userSource{users: userCache, perms: permsCache}
 	sessionHandlers := session.NewHandlers(sessions, users, []string{cfg.BaseURL, cfg.FrontendBaseURL})
@@ -130,7 +130,7 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		Directory: store,
 		Access:    accessStore,
 		Logger:    logger,
-	}, sessions, users, logger)
+	}, sessions, users, []string{cfg.BaseURL, cfg.FrontendBaseURL}, logger)
 
 	var samlService *samlsso.Service
 	if cfg.SAMLIdPMetadataURL != "" {
@@ -160,6 +160,7 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 			return obs.Recover(obs.HTTPMetrics(h), logger)
 		}),
 		httpserver.WithReadyCheck(dependencyCheck(pool, redisClient)),
+		// Public zone: what the entry proxy routes from outside.
 		httpserver.WithRoutes(func(mux *http.ServeMux) {
 			authMux := http.NewServeMux()
 			sessionHandlers.Register(authMux)
@@ -167,15 +168,8 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 				samlService.Register(authMux)
 			}
 			authMux.Handle("POST /graphql", graphqlServer)
-			// Programmatic sessions for E2E suites; never in production
-			// (config guards the combination at startup).
-			if cfg.E2ELoginToken != "" {
-				session.RegisterE2ELogin(authMux, sessions, store, cfg.E2ELoginToken, logger)
-				logger.Info("E2E login endpoint enabled")
-			}
 			withSessions := sessions.Middleware(authMux)
 			mux.Handle("/auth/", withSessions)
-			mux.Handle("/internal/", withSessions)
 			mux.Handle("/graphql", withSessions)
 			// SCIM is machine-authenticated: mounted outside the session
 			// middleware, and only when a client token is configured.
@@ -184,6 +178,21 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 				scimHandlers.SetMetrics(obs.SCIM())
 				scimHandlers.Register(mux)
 				logger.Info("SCIM provisioning enabled")
+			}
+		}),
+		// Internal zone: reachable only from the proxy and monitoring
+		// (NetworkPolicy in the chart); never routed from outside.
+		httpserver.WithInternal(cfg.InternalListenAddr, func(mux *http.ServeMux) {
+			internalAuth := http.NewServeMux()
+			sessionHandlers.RegisterInternal(internalAuth)
+			withSessions := sessions.Middleware(internalAuth)
+			mux.Handle("/internal/session/", withSessions)
+			// Programmatic sessions for E2E suites; never in production
+			// (config guards the combination at startup).
+			if cfg.E2ELoginToken != "" {
+				session.RegisterE2ELogin(internalAuth, sessions, store, cfg.E2ELoginToken, logger)
+				mux.Handle("/internal/e2e/", withSessions)
+				logger.Info("E2E login endpoint enabled")
 			}
 			mux.Handle("GET /internal/metrics", obs.MetricsHandler())
 		}),

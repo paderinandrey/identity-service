@@ -107,7 +107,54 @@ code=$(curl -s -o /dev/null -w '%{http_code}' "${RESOLVE[@]}" -X POST "http://$H
 [ "$code" = 401 ] || [ "$code" = 403 ] || fail "анонимная introspection -> $code, ожидался отказ"
 pass "анонимная introspection -> $code (схема не раскрывается)"
 
-step "11. Первая установка чарта: хук миграций в пустом namespace"
+# Два пода в namespace стенда: с метками разрешённого источника и без
+# меток — как любой чужой под. Долгоживущие, а не `kubectl run -i`: CNI
+# добавляет адрес нового пода в набор политики асинхронно, одноразовый
+# под стреляет раньше и получает отказ при верных метках; после Ready
+# адрес учтён. Печатают HTTP-код, 000 — соединения нет.
+PROBE_ALLOWED="probe-allowed-$RANDOM"
+PROBE_PLAIN="probe-plain-$RANDOM"
+probe_cleanup_pods() { kubectl delete pod -n "$NS" "$PROBE_ALLOWED" "$PROBE_PLAIN" --ignore-not-found --wait=false >/dev/null 2>&1 || true; }
+trap 'probe_cleanup_pods; rm -f "$COOKIE_JAR"' EXIT
+kubectl run "$PROBE_ALLOWED" -n "$NS" --restart=Never --image=curlimages/curl:latest \
+  --labels=identity-stand/tools=true,app.kubernetes.io/component=router --command -- sleep 600 >/dev/null
+kubectl run "$PROBE_PLAIN" -n "$NS" --restart=Never --image=curlimages/curl:latest --command -- sleep 600 >/dev/null
+kubectl wait pod/"$PROBE_ALLOWED" pod/"$PROBE_PLAIN" -n "$NS" --for=condition=Ready --timeout=60s >/dev/null
+probe_curl() { kubectl exec -n "$NS" "$1" -- curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$2" 2>/dev/null || true; }
+SVC="http://$RELEASE-identity-service"
+
+step "11. Внутренняя зона отсутствует на публичном порту"
+code=$(probe_curl "$PROBE_ALLOWED" "$SVC:8080/internal/session/validate")
+[ "$code" = 404 ] || fail "validate на :8080 -> $code, ожидалось 404 (зона не смонтирована)"
+code_m=$(probe_curl "$PROBE_ALLOWED" "$SVC:8080/internal/metrics")
+[ "$code_m" = 404 ] || fail "metrics на :8080 -> $code_m, ожидалось 404"
+pass "validate и metrics на публичном порту -> 404"
+
+step "12. Внутренний порт закрыт сетевой политикой"
+code=$(probe_curl "$PROBE_PLAIN" "$SVC:8081/internal/session/validate")
+[ "$code" = 000 ] || fail "validate на :8081 из немаркированного пода -> $code, ожидалось отсутствие соединения"
+code=$(probe_curl "$PROBE_PLAIN" "$SVC:8080/healthz")
+[ "$code" = 000 ] || fail "публичный порт из немаркированного пода -> $code, ожидалось отсутствие соединения"
+code=$(probe_curl "$PROBE_ALLOWED" "$SVC:8081/internal/session/validate")
+[ "$code" = 401 ] || fail "validate на :8081 из разрешённого пода без cookie -> $code, ожидалось 401"
+code=$(probe_curl "$PROBE_ALLOWED" "$SVC:8081/internal/metrics")
+[ "$code" = 200 ] || fail "metrics на :8081 из разрешённого пода -> $code, ожидалось 200"
+pass "чужой под: соединения нет на оба порта; разрешённый под: validate 401 без cookie, metrics 200"
+
+step "13. Подделанные заголовки контекста перезаписываются на proxy"
+# У qa-пользователя стенда нет ролей — validate отдаёт ПУСТОЙ заголовок
+# прав; он обязан вытеснить подделанный, иначе пустое значение — дыра.
+forged=$(curl -s "${RESOLVE[@]}" "${COOKIE[@]}" \
+  -H 'x-identity-user-id: 00000000-0000-4000-8000-00000000f0f0' \
+  -H 'x-identity-email: forged@example.com' \
+  -H 'x-identity-permissions: gsh:admin.access' \
+  "http://$HOST/debug/echo")
+grep -q 'f0f0\|forged@example.com\|gsh:admin.access' <<< "$forged" && fail "подделанный заголовок дошёл до upstream: $forged"
+grep -q "$uid" <<< "$forged" || fail "upstream не получил id сессии: $forged"
+grep -qi '"x-identity-permissions":""' <<< "$forged" || fail "пустой заголовок прав не заменил подделанный: $forged"
+pass "upstream получил id сессии и пустые права; подделка не прошла"
+
+step "14. Первая установка чарта: хук миграций в пустом namespace"
 # Стенд держит зависимости в том же релизе и хук там выключен; здесь чарт
 # ставится как в проде — в пустой namespace, с внешней базой (отдельная БД
 # в PostgreSQL стенда) — и хук обязан отработать сам, без ресурсов релиза.
@@ -124,7 +171,7 @@ probe_cleanup
 kubectl delete namespace "$PROBE_NS" --ignore-not-found --wait=true >/dev/null 2>&1 || true
 # Уборка — в EXIT-trap до создания первого ресурса: любой fail, set -e или
 # прерывание иначе оставили бы БД, namespace и релиз (ревью Codex, PR #4).
-trap 'probe_cleanup; rm -f "$COOKIE_JAR"' EXIT
+trap 'probe_cleanup; probe_cleanup_pods; rm -f "$COOKIE_JAR"' EXIT
 probe_psql identity_development "CREATE DATABASE $PROBE_DB" >/dev/null || fail "не удалось создать БД $PROBE_DB"
 kubectl create namespace "$PROBE_NS" >/dev/null
 kubectl create secret generic hook-probe-secret -n "$PROBE_NS" \
@@ -136,10 +183,10 @@ install_out=$(helm install hook-probe charts/identity-service -n "$PROBE_NS" \
   --set image.repository=identity-service --set image.tag=dev --set image.pullPolicy=Never \
   --set config.APP_ENV=development --timeout 3m 2>&1) \
   || fail "helm install в пустой namespace не прошёл: $(tail -3 <<< "$install_out")"
-# Эталон — версия основной базы стенда: её мигрировал тот же образ, что
-# запускает хук. Считать по файлам в чекауте нельзя: образ и ветка могут
-# расходиться на одну миграцию.
-expected=$(probe_psql identity_development "SELECT max(version_id) FROM goose_db_version")
+# Эталон — число миграций в чекауте: stand-up собирает образ из него же,
+# и именно этот образ запускает хук. Основная база стенда эталоном быть не
+# может: при чередовании веток она бывает впереди текущей.
+expected=$(ls db/migrations/*.sql | wc -l | tr -d ' ')
 version=$(probe_psql "$PROBE_DB" "SELECT max(version_id) FROM goose_db_version")
 [ "$version" = "$expected" ] || fail "после первой установки версия схемы $version, ожидалась $expected"
 pass "helm install с нуля: хук отработал сам, версия схемы $version"
@@ -154,6 +201,6 @@ jobs_created=$(kubectl get events -n "$PROBE_NS" --field-selector reason=Success
 [ "$revision" = 2 ] && [ "$jobs_created" -ge 2 ] || fail "upgrade: revision=$revision, запусков Job миграций=$jobs_created"
 pass "helm upgrade: revision 2, хук миграций отработал повторно"
 probe_cleanup
-trap 'rm -f "$COOKIE_JAR"' EXIT
+trap 'probe_cleanup_pods; rm -f "$COOKIE_JAR"' EXIT
 
 printf '\nСТЕНД ПРОВЕРЕН ЦЕЛИКОМ\n' 

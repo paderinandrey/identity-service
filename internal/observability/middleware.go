@@ -118,8 +118,14 @@ type CacheMetrics struct {
 	name string
 }
 
-// Cache returns a hit/miss adapter for the named cache.
+// Cache returns a hit/miss adapter for the named cache. The labelled
+// series start at zero right away: a cache that never evicted or was
+// never asked must still show up as a healthy zero, not be missing from
+// the scrape (Codex review, PR #8).
 func (o *Observability) Cache(name string) *CacheMetrics {
+	o.cacheEvictions.WithLabelValues(name).Add(0)
+	o.cacheRequests.WithLabelValues(name, "hit").Add(0)
+	o.cacheRequests.WithLabelValues(name, "miss").Add(0)
 	return &CacheMetrics{o: o, name: name}
 }
 
@@ -131,3 +137,9 @@ func (m *CacheMetrics) Observe(hit bool) {
 	}
 	m.o.cacheRequests.WithLabelValues(m.name, result).Inc()
 }
+
+// SizeSet reports the cache's current entry count.
+func (m *CacheMetrics) SizeSet(n int) { m.o.cacheEntries.WithLabelValues(m.name).Set(float64(n)) }
+
+// Evicted counts one capacity eviction.
+func (m *CacheMetrics) Evicted() { m.o.cacheEvictions.WithLabelValues(m.name).Inc() }

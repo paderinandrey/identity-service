@@ -252,3 +252,36 @@ func TestEffectivePermissionsEmptyForInactiveUser(t *testing.T) {
 		t.Errorf("inactive user perms = %v, want empty (assignments are kept, rights are not)", perms)
 	}
 }
+
+func TestAssignmentsForUsersLoadsManyInOneCall(t *testing.T) {
+	e := newAccessEnv(t)
+	ctx := t.Context()
+	other := mustCreateUser(t, e.store, "other-roles@example.com", "Other")
+	lonely := mustCreateUser(t, e.store, "no-roles@example.com", "Lonely")
+	if err := e.access.GrantRole(ctx, "cli", e.user.ID, "gsh", "viewer"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.access.GrantRole(ctx, "cli", other.ID, "dfm", "engineer"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.access.GrantRole(ctx, "cli", other.ID, "gsh", "sourcing_manager"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := e.access.AssignmentsForUsers(ctx, []string{e.user.ID, other.ID, lonely.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got[e.user.ID]) != 1 || got[e.user.ID][0].Role != "viewer" {
+		t.Errorf("user assignments = %+v", got[e.user.ID])
+	}
+	if len(got[other.ID]) != 2 || got[other.ID][0].Application != "dfm" || got[other.ID][1].Role != "sourcing_manager" {
+		t.Errorf("other assignments = %+v, want dfm/engineer then gsh/sourcing_manager", got[other.ID])
+	}
+	if _, present := got[lonely.ID]; present {
+		t.Error("a user without assignments must be absent from the map")
+	}
+	if empty, err := e.access.AssignmentsForUsers(ctx, nil); err != nil || len(empty) != 0 {
+		t.Errorf("empty input = %v, %v", empty, err)
+	}
+}

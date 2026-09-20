@@ -13,7 +13,7 @@ spec:
     matchLabels:
       {{- include "identity-service.selectorLabels" . | nindent 6 }}
   endpoints:
-    - port: http
+    - port: internal
       path: /internal/metrics
       interval: {{ .Values.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
