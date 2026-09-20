@@ -90,6 +90,49 @@ func (s *AccessStore) GrantRole(ctx context.Context, actor, userID, app, role st
 	})
 }
 
+// GrantRoles assigns every app/role in refs to the user in one
+// transaction: an unknown role rolls the whole entry back, a role already
+// held is left alone without a journal entry, and each new assignment is
+// journaled like GrantRole. With dryRun the transaction is rolled back
+// after the work, so the returned count is what a real run would grant.
+// Built for the bulk import CLI.
+func (s *AccessStore) GrantRoles(ctx context.Context, actor, userID string, refs []string, dryRun bool) (int, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	granted := 0
+	for _, ref := range refs {
+		app, role, err := access.SplitRoleRef(ref)
+		if err != nil {
+			return 0, err
+		}
+		roleID, err := findRoleID(ctx, tx, app, role)
+		if err != nil {
+			return 0, err
+		}
+		tag, err := tx.Exec(ctx,
+			`INSERT INTO user_roles (user_id, role_id, granted_by) VALUES ($1, $2, $3)
+			 ON CONFLICT (user_id, role_id) DO NOTHING`, userID, roleID, actor)
+		if err != nil {
+			return 0, err
+		}
+		if tag.RowsAffected() == 0 {
+			continue
+		}
+		if err := writeJournal(ctx, tx, actor, access.ActionGrant, userID, roleID,
+			map[string]any{"application": app, "role": role, "import": true}); err != nil {
+			return 0, err
+		}
+		granted++
+	}
+	if dryRun {
+		return granted, tx.Rollback(ctx)
+	}
+	return granted, tx.Commit(ctx)
+}
+
 // RevokeRole removes the assignment; idempotent, journaled.
 func (s *AccessStore) RevokeRole(ctx context.Context, actor, userID, app, role string) error {
 	return s.withTx(ctx, func(tx pgx.Tx) error {

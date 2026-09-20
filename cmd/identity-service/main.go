@@ -74,10 +74,12 @@ func run() error {
 		return changeRole(ctx, cfg, args, false)
 	case "seed-access":
 		return seedAccess(ctx, cfg, args)
+	case "import-assignments":
+		return importAssignments(ctx, cfg, args)
 	case "replay-users":
 		return replayUsers(ctx, cfg)
 	default:
-		return fmt.Errorf("unknown command %q (want serve, migrate, create-user, grant-role, revoke-role, seed-access or replay-users)", cmd)
+		return fmt.Errorf("unknown command %q (want serve, migrate, create-user, grant-role, revoke-role, seed-access, import-assignments or replay-users)", cmd)
 	}
 }
 
@@ -332,6 +334,72 @@ func changeRole(ctx context.Context, cfg config.Config, args []string, grant boo
 		return err
 	}
 	fmt.Printf("%s: %s/%s for %s\n", name, app, role, user.Email)
+	return nil
+}
+
+// importAssignments grants roles to many users from a file: the cutover
+// path for loading another system's assignments. Idempotent and
+// restartable; one entry's failure is reported and does not stop the rest.
+func importAssignments(ctx context.Context, cfg config.Config, args []string) error {
+	fs := flag.NewFlagSet("import-assignments", flag.ContinueOnError)
+	file := fs.String("file", "", "YAML file with assignments (required)")
+	dryRun := fs.Bool("dry-run", false, "resolve users and roles, report, write nothing")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *file == "" {
+		return fmt.Errorf("import-assignments: --file is required")
+	}
+	raw, err := os.ReadFile(*file)
+	if err != nil {
+		return err
+	}
+	var imp access.ImportFile
+	if err := yaml.Unmarshal(raw, &imp); err != nil {
+		return fmt.Errorf("import-assignments: parse %s: %w", *file, err)
+	}
+	if err := imp.Validate(); err != nil {
+		return fmt.Errorf("import-assignments: %w", err)
+	}
+
+	pool, err := postgres.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	store := postgres.NewStore(pool)
+	accessStore := postgres.NewAccessStore(pool)
+
+	ok, failed := 0, 0
+	for _, entry := range imp.Assignments {
+		var user *identity.User
+		if entry.ID != "" {
+			user, err = store.FindByID(ctx, entry.ID)
+		} else {
+			user, err = store.FindActiveByEmail(ctx, identity.NormalizeEmail(entry.Email))
+		}
+		if err != nil {
+			fmt.Printf("FAIL %s: %v\n", entry.Key(), err)
+			failed++
+			continue
+		}
+		granted, err := accessStore.GrantRoles(ctx, cliActor, user.ID, entry.Roles, *dryRun)
+		if err != nil {
+			fmt.Printf("FAIL %s: %v\n", entry.Key(), err)
+			failed++
+			continue
+		}
+		fmt.Printf("ok %s: granted %d, already %d\n", entry.Key(), granted, len(entry.Roles)-granted)
+		ok++
+	}
+	suffix := ""
+	if *dryRun {
+		suffix = " (dry-run, nothing written)"
+	}
+	fmt.Printf("import-assignments: %d ok, %d failed%s\n", ok, failed, suffix)
+	if failed > 0 {
+		return fmt.Errorf("import-assignments: %d entry(ies) failed; fix the file and rerun — applied entries are idempotent", failed)
+	}
 	return nil
 }
 

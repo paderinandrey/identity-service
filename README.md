@@ -182,6 +182,31 @@ applications:
 Grant the first access administrator once via CLI:
 `bin/identity-service grant-role --email admin@example.com --role identity/admin`.
 
+To load many assignments at once — the cutover from a system that kept
+its own roles, such as GSH's `users_roles` — use `import-assignments`:
+
+```yaml
+assignments:
+  - email: ada@example.com          # an active user, matched by email
+    roles: [gsh/observer, gsh/operator]
+  - id: 0f2b7c1a-3d4e-4f5a-8b6c-7d8e9f0a1b2c   # or by global id
+    roles: [dfm/engineer]
+```
+
+```bash
+bin/identity-service import-assignments --file assignments.yaml --dry-run   # report only
+bin/identity-service import-assignments --file assignments.yaml
+```
+
+The file is validated as a whole before anything is written. Each entry
+is one transaction: an unknown user or role fails that entry and rolls
+it back, the other entries still apply, and the command exits non-zero
+so the failure is not missed. Roles already held are left alone and not
+journaled, so rerunning the same file after fixing it is safe. The
+import only adds; it never revokes roles missing from the file. Cutover
+order: provision users over SCIM, `replay-users` for the projections,
+then `import-assignments`.
+
 ## GraphQL
 
 Limits on `POST /graphql`, all enforced before any resolver runs: the
