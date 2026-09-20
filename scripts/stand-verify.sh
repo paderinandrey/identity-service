@@ -136,20 +136,27 @@ pass "повторный replay: $((stale_now - stale_before)) snapshot'ов о�
 
 # Мусор уходит в DLQ консьюмера, а не исчезает: публикуем в exchange тело,
 # которое не разобрать, и ждём его в очереди .dlq.
+dlq_depth() {
+  kubectl exec -n "$NS" "deploy/$RELEASE-identity-service-rabbitmq" -- rabbitmqctl list_queues name messages 2>/dev/null \
+    | awk '$1=="stub-consumer.users.dlq"{print $2}'
+}
+# Относительно текущей глубины: DLQ durable, и предыдущий прогон уже
+# оставил в ней сообщение.
+dlq_before=$(dlq_depth); dlq_before=${dlq_before:-0}
 rejected_before=$(consumer /stats | python3 -c 'import json,sys; print(json.load(sys.stdin)["rejected"])')
 kubectl exec -n "$NS" "deploy/$RELEASE-identity-service-rabbitmq" -- rabbitmqadmin --non-interactive \
   --username identity --password identity publish message \
   --exchange identity.events --routing-key user.updated --payload '{"not":"an event"}' >/dev/null 2>&1 \
   || fail "не удалось опубликовать тестовое сообщение через rabbitmqadmin"
 for _ in $(seq 1 20); do
-  dlq=$(kubectl exec -n "$NS" "deploy/$RELEASE-identity-service-rabbitmq" -- rabbitmqctl list_queues name messages 2>/dev/null | awk '$1=="stub-consumer.users.dlq"{print $2}')
-  [ "${dlq:-0}" -ge 1 ] && break
+  dlq=$(dlq_depth); dlq=${dlq:-0}
+  rejected_now=$(consumer /stats | python3 -c 'import json,sys; print(json.load(sys.stdin)["rejected"])')
+  [ "$dlq" -gt "$dlq_before" ] && [ "$rejected_now" -gt "$rejected_before" ] && break
   sleep 1
 done
-[ "${dlq:-0}" -ge 1 ] || fail "неразбираемое сообщение не попало в DLQ"
-rejected_now=$(consumer /stats | python3 -c 'import json,sys; print(json.load(sys.stdin)["rejected"])')
+[ "$dlq" -gt "$dlq_before" ] || fail "неразбираемое сообщение не попало в DLQ (глубина $dlq, была $dlq_before)"
 [ "$rejected_now" = "$((rejected_before + 1))" ] || fail "rejected=$rejected_now, ожидалось $((rejected_before + 1))"
-pass "неразбираемое тело: rejected +1, сообщение лежит в stub-consumer.users.dlq ($dlq)"
+pass "неразбираемое тело: rejected +1, DLQ stub-consumer.users.dlq выросла с $dlq_before до $dlq"
 
 step "6. Вход через форму Keycloak (полный SAML-цикл)"
 # curl отбрасывает Secure-куки Keycloak по http, а браузер на *.localhost

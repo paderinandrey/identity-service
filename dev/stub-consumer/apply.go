@@ -12,10 +12,17 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"regexp"
 	"sort"
-	"strings"
 	"sync"
 	"time"
+)
+
+// The published schema's formats, checked here so that a body the schema
+// would reject is dead-lettered rather than applied (Codex review, PR #12).
+var (
+	uuidPattern      = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	eventTypePattern = regexp.MustCompile(`^identity\.user\.[a-z]+$`)
 )
 
 // Event mirrors docs/events/user-event.schema.json.
@@ -137,10 +144,14 @@ func parse(body []byte) (Event, error) {
 	switch {
 	case ev.SchemaVersion != schemaVersion:
 		return ev, errors.Join(errInvalid, errors.New("unknown schemaVersion"))
-	case ev.ID == "", ev.User.ID == "", ev.User.Email == "":
-		return ev, errors.Join(errInvalid, errors.New("empty id, user.id or user.email"))
-	case !strings.HasPrefix(ev.Type, "identity.user."):
-		return ev, errors.Join(errInvalid, errors.New("type outside identity.user.*"))
+	case !uuidPattern.MatchString(ev.ID):
+		return ev, errors.Join(errInvalid, errors.New("id is not a uuid"))
+	case !uuidPattern.MatchString(ev.User.ID):
+		return ev, errors.Join(errInvalid, errors.New("user.id is not a uuid"))
+	case ev.User.Email == "":
+		return ev, errors.Join(errInvalid, errors.New("user.email is empty"))
+	case !eventTypePattern.MatchString(ev.Type):
+		return ev, errors.Join(errInvalid, errors.New("type does not match ^identity\\.user\\.[a-z]+$"))
 	case ev.User.Version < 1:
 		return ev, errors.Join(errInvalid, errors.New("user.version must be >= 1"))
 	}

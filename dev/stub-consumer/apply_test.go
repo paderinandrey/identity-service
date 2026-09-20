@@ -8,6 +8,14 @@ import (
 	"time"
 )
 
+// Synthetic, schema-valid identifiers: the parser now checks UUID format.
+func eid(n int) string { return fmt.Sprintf("00000000-0000-4000-8000-%012d", n) }
+
+var (
+	ada = UserSnapshot{ID: "0f2b7c1a-3d4e-4f5a-8b6c-7d8e9f0a1b2c", Email: "ada@example.com", Name: "Ada Example", Active: true, Version: 4}
+	bob = UserSnapshot{ID: "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", Email: "bob@example.com", Name: "Bob Example", Active: true, Version: 2}
+)
+
 func body(t *testing.T, id string, eventType string, user UserSnapshot) []byte {
 	t.Helper()
 	b, err := json.Marshal(Event{ID: id, Type: eventType, SchemaVersion: 1, OccurredAt: time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC), User: user})
@@ -17,11 +25,15 @@ func body(t *testing.T, id string, eventType string, user UserSnapshot) []byte {
 	return b
 }
 
-var ada = UserSnapshot{ID: "0f2b7c1a-3d4e-4f5a-8b6c-7d8e9f0a1b2c", Email: "ada@example.com", Name: "Ada Example", Active: true, Version: 4}
+// rawBody builds a body by hand for shapes the typed Event cannot express
+// (missing fields, nulls, wrong types).
+func rawBody(user string) []byte {
+	return []byte(`{"id":"` + eid(99) + `","type":"identity.user.updated","schemaVersion":1,"occurredAt":"2026-09-19T12:00:00Z","user":` + user + `}`)
+}
 
 func TestDuplicateEventIsIgnored(t *testing.T) {
 	p := NewProjection()
-	msg := body(t, "e1", "identity.user.updated", ada)
+	msg := body(t, eid(1), "identity.user.updated", ada)
 	if got := p.Apply(msg); got != Applied {
 		t.Fatalf("first delivery = %s, want applied", got)
 	}
@@ -35,15 +47,15 @@ func TestDuplicateEventIsIgnored(t *testing.T) {
 
 func TestStaleVersionDoesNotOverwrite(t *testing.T) {
 	p := NewProjection()
-	p.Apply(body(t, "e4", "identity.user.updated", ada))
+	p.Apply(body(t, eid(4), "identity.user.updated", ada))
 	older := ada
 	older.Version, older.Name = 3, "Old Name"
-	if got := p.Apply(body(t, "e3", "identity.user.updated", older)); got != Stale {
+	if got := p.Apply(body(t, eid(3), "identity.user.updated", older)); got != Stale {
 		t.Errorf("older version = %s, want stale", got)
 	}
 	same := ada
 	same.Name = "Same Version Different Name"
-	if got := p.Apply(body(t, "e4b", "identity.user.snapshot", same)); got != Stale {
+	if got := p.Apply(body(t, eid(5), "identity.user.snapshot", same)); got != Stale {
 		t.Errorf("equal version = %s, want stale", got)
 	}
 	if u, _ := p.User(ada.ID); u.Name != ada.Name || u.Version != 4 {
@@ -61,7 +73,7 @@ func TestConcurrentEventsEndWithHigherVersion(t *testing.T) {
 			for _, v := range order {
 				u := ada
 				u.Version, u.Name = v, fmt.Sprintf("v%d", v)
-				msg := body(t, fmt.Sprintf("e%d", v), "identity.user.updated", u)
+				msg := body(t, eid(int(v)), "identity.user.updated", u)
 				wg.Add(1)
 				go func() { defer wg.Done(); p.Apply(msg) }()
 			}
@@ -75,35 +87,40 @@ func TestConcurrentEventsEndWithHigherVersion(t *testing.T) {
 
 func TestUnknownTypeIsAppliedAsSnapshot(t *testing.T) {
 	p := NewProjection()
-	if got := p.Apply(body(t, "e9", "identity.user.merged", ada)); got != Applied {
+	if got := p.Apply(body(t, eid(9), "identity.user.merged", ada)); got != Applied {
 		t.Errorf("unknown type = %s, want applied (every event is a full snapshot)", got)
 	}
 }
 
+// Anything the published schema rejects is rejected here too, so that
+// the reference consumer dead-letters exactly what the contract says.
 func TestUnparsableBodiesAreRejected(t *testing.T) {
 	p := NewProjection()
 	noVersion := ada
 	noVersion.Version = 0
-	for name, msg := range map[string][]byte{
+	nonUUIDUser := ada
+	nonUUIDUser.ID = "42"
+	cases := map[string][]byte{
 		"not json":              []byte("{"),
-		"unknown schemaVersion": []byte(`{"id":"e1","type":"identity.user.updated","schemaVersion":2,"occurredAt":"2026-09-19T12:00:00Z","user":{"id":"u","email":"a@example.com","name":"A","active":true,"version":1}}`),
-		"missing user id":       body(t, "e2", "identity.user.updated", UserSnapshot{Email: "a@example.com", Version: 1}),
-		"version below one":     body(t, "e3", "identity.user.updated", noVersion),
-		// A higher-version body without "active" must not decode as
-		// active=false and deactivate the user (Codex review, PR #12).
-		"missing active":      []byte(`{"id":"e5","type":"identity.user.updated","schemaVersion":1,"occurredAt":"2026-09-19T12:00:00Z","user":{"id":"u","email":"a@example.com","name":"A","version":9}}`),
-		"missing occurredAt":  []byte(`{"id":"e6","type":"identity.user.updated","schemaVersion":1,"user":{"id":"u","email":"a@example.com","name":"A","active":true,"version":1}}`),
-		"type outside family": body(t, "e7", "user.updated", ada),
-		// null passes a presence check but not a type check; a plain bool
-		// would decode it as false (Codex review, PR #12).
-		"null active":    []byte(`{"id":"e8","type":"identity.user.updated","schemaVersion":1,"occurredAt":"2026-09-19T12:00:00Z","user":{"id":"u","email":"a@example.com","name":"A","active":null,"version":9}}`),
-		"version string": []byte(`{"id":"e9","type":"identity.user.updated","schemaVersion":1,"occurredAt":"2026-09-19T12:00:00Z","user":{"id":"u","email":"a@example.com","name":"A","active":true,"version":"9"}}`),
-	} {
+		"unknown schemaVersion": []byte(`{"id":"` + eid(1) + `","type":"identity.user.updated","schemaVersion":2,"occurredAt":"2026-09-19T12:00:00Z","user":{"id":"` + ada.ID + `","email":"a@example.com","name":"A","active":true,"version":1}}`),
+		"missing user id":       body(t, eid(2), "identity.user.updated", UserSnapshot{Email: "a@example.com", Version: 1}),
+		"version below one":     body(t, eid(3), "identity.user.updated", noVersion),
+		"missing active":        rawBody(`{"id":"` + ada.ID + `","email":"a@example.com","name":"A","version":9}`),
+		"null active":           rawBody(`{"id":"` + ada.ID + `","email":"a@example.com","name":"A","active":null,"version":9}`),
+		"version string":        rawBody(`{"id":"` + ada.ID + `","email":"a@example.com","name":"A","active":true,"version":"9"}`),
+		"missing occurredAt":    []byte(`{"id":"` + eid(6) + `","type":"identity.user.updated","schemaVersion":1,"user":{"id":"` + ada.ID + `","email":"a@example.com","name":"A","active":true,"version":1}}`),
+		"type outside family":   body(t, eid(7), "user.updated", ada),
+		"type with empty tail":  body(t, eid(8), "identity.user.", ada),
+		"type with dash":        body(t, eid(10), "identity.user.foo-bar", ada),
+		"event id not a uuid":   body(t, "e11", "identity.user.updated", ada),
+		"user id not a uuid":    body(t, eid(12), "identity.user.updated", nonUUIDUser),
+	}
+	for name, msg := range cases {
 		if got := p.Apply(msg); got != Rejected {
 			t.Errorf("%s = %s, want rejected", name, got)
 		}
 	}
-	if len(p.Users()) != 0 || p.Stats().Rejected != 9 {
+	if len(p.Users()) != 0 || p.Stats().Rejected != len(cases) {
 		t.Errorf("rejected bodies must not touch the projection: users=%v stats=%+v", p.Users(), p.Stats())
 	}
 }
@@ -112,9 +129,8 @@ func TestUnparsableBodiesAreRejected(t *testing.T) {
 // projection lacks is created — so replay is safe to repeat.
 func TestReplayIsIdempotent(t *testing.T) {
 	p := NewProjection()
-	bob := UserSnapshot{ID: "b", Email: "bob@example.com", Name: "Bob", Active: true, Version: 2}
-	p.Apply(body(t, "s1", "identity.user.snapshot", ada))
-	first := []Outcome{p.Apply(body(t, "s2", "identity.user.snapshot", ada)), p.Apply(body(t, "s3", "identity.user.snapshot", bob))}
+	p.Apply(body(t, eid(21), "identity.user.snapshot", ada))
+	first := []Outcome{p.Apply(body(t, eid(22), "identity.user.snapshot", ada)), p.Apply(body(t, eid(23), "identity.user.snapshot", bob))}
 	if first[0] != Stale || first[1] != Applied {
 		t.Errorf("replay outcomes = %v, want [stale applied]", first)
 	}
