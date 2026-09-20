@@ -55,6 +55,10 @@ type amqpPublisher struct {
 	returns chan amqp.Return
 }
 
+// dialTimeout bounds TCP connect and the AMQP handshake; the same budget
+// as one publish.
+const dialTimeout = publishTimeout
+
 func newAMQPPublisher(url, exchange string, logger *slog.Logger) *amqpPublisher {
 	return &amqpPublisher{url: url, exchange: exchange, logger: logger}
 }
@@ -64,7 +68,10 @@ func (p *amqpPublisher) ensureChannel() error {
 		return nil
 	}
 	p.Close()
-	conn, err := amqp.Dial(p.url)
+	// The library's default dial waits 30s; a relay round must not sit
+	// in a handshake longer than a publish is allowed to take, or backoff,
+	// gauges and cancellation all stall behind it (Codex review, PR #6).
+	conn, err := amqp.DialConfig(p.url, amqp.Config{Dial: amqp.DefaultDial(dialTimeout)})
 	if err != nil {
 		return fmt.Errorf("%w: amqp dial: %w", ErrTransport, err)
 	}

@@ -11,9 +11,17 @@ DROP INDEX CONCURRENTLY IF EXISTS user_events_outbox_pending_idx;
 CREATE INDEX CONCURRENTLY user_events_outbox_pending_idx
     ON user_events_outbox (created_at, id) WHERE published_at IS NULL AND quarantined_at IS NULL;
 DROP INDEX CONCURRENTLY IF EXISTS user_events_outbox_user_pending_idx;
--- Head-of-line check per user, in version order.
+-- Head-of-line check per user, in version order. Keyed on the same
+-- COALESCE expressions the claim query uses, so rows an old replica wrote
+-- with NULL columns are covered too and the planner can match the
+-- predicate; plain-column keys would be skipped for the expression
+-- (Codex review, PR #6).
 CREATE INDEX CONCURRENTLY user_events_outbox_user_pending_idx
-    ON user_events_outbox (user_id, user_version, created_at, id) WHERE published_at IS NULL AND quarantined_at IS NULL;
+    ON user_events_outbox (
+        COALESCE(user_id, (payload -> 'user' ->> 'id')::uuid),
+        COALESCE(user_version, (payload -> 'user' ->> 'version')::bigint),
+        created_at, id)
+    WHERE published_at IS NULL AND quarantined_at IS NULL;
 DROP INDEX CONCURRENTLY IF EXISTS user_events_outbox_quarantined_idx;
 -- Quarantine gauge without touching published history.
 CREATE INDEX CONCURRENTLY user_events_outbox_quarantined_idx

@@ -131,3 +131,14 @@
 - **P2, Down backfill'а.** No-op: значения остаются в payload, колонки
   снимает Down `00009`.
 
+## По итогам третьего ревью Codex (2026-09-20)
+
+- **P1, индекс под COALESCE.** Предикат head-of-line сравнивает
+  `COALESCE(user_id, payload)` и `COALESCE(user_version, payload)`, а индекс
+  был по голым колонкам — планировщик его не применял, и каждый claim
+  при большом backlog сканировал pending. Индекс `user_pending_idx`
+  теперь по тем же выражениям (jsonb-операторы и приведения immutable).
+- **P2, таймаут dial.** `amqp.Dial` ждал до 30 с библиотечного дефолта
+  вне контекста публикации; теперь `DialConfig` с `DefaultDial(5s)` —
+  тот же бюджет, что у publish.
+
