@@ -285,3 +285,57 @@ func TestAssignmentsForUsersLoadsManyInOneCall(t *testing.T) {
 		t.Errorf("empty input = %v, %v", empty, err)
 	}
 }
+
+// GrantRoles is the bulk-import primitive: one transaction per user,
+// idempotent, journaled per new assignment, all-or-nothing on an unknown
+// role, and a dry run that changes nothing.
+func TestGrantRolesIsAtomicIdempotentAndDryRunnable(t *testing.T) {
+	e := newAccessEnv(t)
+	ctx := t.Context()
+
+	n, err := e.access.GrantRoles(ctx, "cli", e.user.ID, []string{"gsh/viewer", "dfm/engineer"}, false)
+	if err != nil || n != 2 {
+		t.Fatalf("first import: granted=%d err=%v, want 2", n, err)
+	}
+	journal := e.journalCount(t, access.ActionGrant)
+
+	n, err = e.access.GrantRoles(ctx, "cli", e.user.ID, []string{"gsh/viewer", "dfm/engineer"}, false)
+	if err != nil || n != 0 {
+		t.Errorf("repeat import: granted=%d err=%v, want 0", n, err)
+	}
+	if got := e.journalCount(t, access.ActionGrant); got != journal {
+		t.Errorf("repeat import wrote %d journal entries", got-journal)
+	}
+
+	// One good role and one unknown: nothing of the entry sticks.
+	n, err = e.access.GrantRoles(ctx, "cli", e.user.ID, []string{"gsh/sourcing_manager", "gsh/ghost"}, false)
+	if !errors.Is(err, access.ErrRoleNotFound) || n != 0 {
+		t.Errorf("unknown role: granted=%d err=%v, want ErrRoleNotFound and 0", n, err)
+	}
+	perms, _ := e.access.EffectivePermissions(ctx, e.user.ID)
+	if contains := func(p string) bool {
+		for _, x := range perms {
+			if x == p {
+				return true
+			}
+		}
+		return false
+	}; contains("gsh:orders.write") {
+		t.Errorf("sourcing_manager leaked through a rolled-back entry: %v", perms)
+	}
+
+	// Dry run reports what would happen and leaves no trace.
+	n, err = e.access.GrantRoles(ctx, "cli", e.user.ID, []string{"gsh/sourcing_manager"}, true)
+	if err != nil || n != 1 {
+		t.Errorf("dry run: granted=%d err=%v, want 1", n, err)
+	}
+	perms, _ = e.access.EffectivePermissions(ctx, e.user.ID)
+	for _, p := range perms {
+		if p == "gsh:orders.write" {
+			t.Errorf("dry run granted for real: %v", perms)
+		}
+	}
+	if got := e.journalCount(t, access.ActionGrant); got != journal {
+		t.Errorf("dry run wrote %d journal entries", got-journal)
+	}
+}
