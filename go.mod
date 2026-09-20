@@ -13,6 +13,7 @@ require (
 	github.com/prometheus/client_golang v1.24.1
 	github.com/rabbitmq/amqp091-go v1.14.0
 	github.com/redis/go-redis/v9 v9.22.0
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/vektah/gqlparser/v2 v2.5.37
 	golang.org/x/sync v0.22.0
 	gopkg.in/yaml.v3 v3.0.1

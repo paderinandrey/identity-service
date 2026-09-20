@@ -157,6 +157,24 @@ dependencies:
       initialDelaySeconds: 5
       periodSeconds: 5
       failureThreshold: 20
+  stub-consumer:
+    enabled: true
+    # Референсный консьюмер событий (dev/stub-consumer): своя очередь,
+    # дедупликация по id, применение по версии. stand-verify проверяет
+    # replay, живое изменение и повторный replay через его HTTP.
+    image: stub-consumer:dev
+    pullPolicy: Never
+    port: 8080
+    portName: http
+    env:
+      - name: RABBITMQ_URL
+        value: "amqp://identity:identity@identity-stand-identity-service-rabbitmq:5672/"
+    readinessProbe:
+      httpGet:
+        path: /healthz
+        port: 8080
+      initialDelaySeconds: 3
+      periodSeconds: 5
   stub-subgraph:
     enabled: true
     # Стоит за GSH/DFM в спайке federation: владеет Order и ссылается на
