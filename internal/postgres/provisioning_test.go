@@ -250,3 +250,37 @@ func TestProvisionApplyOmittedFieldsComeFromTheLockedRow(t *testing.T) {
 		t.Errorf("flag-only apply on an inactive user = %+v %+v %v; want no-op that keeps the profile", deleted, outcome, err)
 	}
 }
+
+// Title is part of the profile: set on create, changed alone with a
+// version bump and an updated event, kept by an apply that omits it.
+func TestProvisionTitle(t *testing.T) {
+	store := newTestStore(t)
+	ctx := t.Context()
+	u, err := store.ProvisionCreate(ctx, identity.Provision{
+		Email: new("titled@example.com"), Name: new("Titled"), Title: new("Engineer"), Active: new(true),
+	})
+	if err != nil || u.Title != "Engineer" {
+		t.Fatalf("create: %+v %v", u, err)
+	}
+	v1 := u.Version
+
+	u, _, err = store.ProvisionApply(ctx, u.ID, identity.Provision{Title: new("Staff Engineer")})
+	if err != nil || u.Title != "Staff Engineer" || u.Version != v1+1 {
+		t.Fatalf("apply title: title=%q version=%d err=%v", u.Title, u.Version, err)
+	}
+	var events int
+	if err := store.pool.QueryRow(ctx,
+		"SELECT count(*) FROM user_events_outbox WHERE user_id = $1 AND event_type = 'identity.user.updated' AND payload -> 'user' ->> 'title' = 'Staff Engineer'",
+		u.ID).Scan(&events); err != nil || events != 1 {
+		t.Errorf("updated event with the new title: %d, %v", events, err)
+	}
+
+	u, _, err = store.ProvisionApply(ctx, u.ID, identity.Provision{Name: new("Retitled")})
+	if err != nil || u.Title != "Staff Engineer" || u.Version != v1+2 {
+		t.Errorf("apply without title: title=%q version=%d err=%v", u.Title, u.Version, err)
+	}
+	u, _, err = store.ProvisionApply(ctx, u.ID, identity.Provision{Title: new("Staff Engineer")})
+	if err != nil || u.Version != v1+2 {
+		t.Errorf("same title must not bump the version: version=%d err=%v", u.Version, err)
+	}
+}

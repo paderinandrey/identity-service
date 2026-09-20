@@ -138,3 +138,20 @@ func TestReplayIsIdempotent(t *testing.T) {
 		t.Errorf("users = %v, want ada and bob", p.Users())
 	}
 }
+
+// title is optional in the schema: a snapshot without it is applied with
+// an empty title, one with it projects the value.
+func TestTitleIsOptional(t *testing.T) {
+	p := NewProjection()
+	if got := p.Apply(rawBody(`{"id":"` + ada.ID + `","email":"a@example.com","name":"A","active":true,"version":1}`)); got != Applied {
+		t.Fatalf("snapshot without title = %s, want applied", got)
+	}
+	titled := ada
+	titled.Version, titled.Title = 2, "Staff Engineer"
+	if got := p.Apply(body(t, eid(31), "identity.user.updated", titled)); got != Applied {
+		t.Fatalf("snapshot with title = %s, want applied", got)
+	}
+	if u, _ := p.User(ada.ID); u.Title != "Staff Engineer" {
+		t.Errorf("projected title = %q", u.Title)
+	}
+}

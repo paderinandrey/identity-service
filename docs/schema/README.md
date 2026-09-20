@@ -12,7 +12,7 @@
 | [public.user_events_outbox](public.user_events_outbox.md) | 12      | Transactional outbox: user-change events awaiting publication to RabbitMQ            | BASE TABLE |
 | [public.user_identities](public.user_identities.md)       | 5       | External identity mappings (SSO providers) to unified users                          | BASE TABLE |
 | [public.user_roles](public.user_roles.md)                 | 4       | Role assignments; the only source of truth for user access                           | BASE TABLE |
-| [public.users](public.users.md)                           | 9       | Unified application users shared across GSH/DFM ecosystem                            | BASE TABLE |
+| [public.users](public.users.md)                           | 10      | Unified application users shared across GSH/DFM ecosystem                            | BASE TABLE |
 
 ## Stored procedures and functions
 
@@ -147,6 +147,7 @@ erDiagram
   timestamp_with_time_zone last_sign_in_at
   text name
   bigint session_epoch
+  text title
   timestamp_with_time_zone updated_at
   bigint version
 }

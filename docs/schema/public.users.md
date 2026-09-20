@@ -15,6 +15,7 @@ Unified application users shared across GSH/DFM ecosystem
 | last_sign_in_at | timestamp with time zone |                   | true     |                                                                                                                                                     |         | Timestamp of the most recent successful sign-in                                                                                              |
 | name            | text                     | ''::text          | false    |                                                                                                                                                     |         | Display name                                                                                                                                 |
 | session_epoch   | bigint                   | 0                 | false    |                                                                                                                                                     |         | Session generation: bumped in the deactivation transaction; a session is valid only while the epoch it recorded at sign-in equals this value |
+| title           | text                     | ''::text          | false    |                                                                                                                                                     |         | Job title from provisioning (SCIM title); empty when unknown                                                                                 |
 | updated_at      | timestamp with time zone | now()             | false    |                                                                                                                                                     |         | Row last update timestamp                                                                                                                    |
 | version         | bigint                   | 1                 | false    |                                                                                                                                                     |         | Profile version, incremented on every profile/active change; lets consumers drop stale updates                                               |
 
@@ -30,6 +31,7 @@ Unified application users shared across GSH/DFM ecosystem
 | users_name_not_null          | n           | NOT NULL name          |
 | users_pkey                   | PRIMARY KEY | PRIMARY KEY (id)       |
 | users_session_epoch_not_null | n           | NOT NULL session_epoch |
+| users_title_not_null         | n           | NOT NULL title         |
 | users_updated_at_not_null    | n           | NOT NULL updated_at    |
 | users_version_not_null       | n           | NOT NULL version       |
 
@@ -57,6 +59,7 @@ erDiagram
   timestamp_with_time_zone last_sign_in_at
   text name
   bigint session_epoch
+  text title
   timestamp_with_time_zone updated_at
   bigint version
 }

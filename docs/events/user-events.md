@@ -42,7 +42,11 @@ remains the bootstrap path.
   order; rely on `user.version`.
 - **Every event carries the full user snapshot.** There are no partial
   updates, so applying any event is "replace the projection row with this
-  snapshot if it is newer".
+  snapshot if it is newer". The snapshot is `id`, `email`, `name`,
+  `title`, `active`, `version`; `title` is the job title from
+  provisioning, empty when unknown, and optional in the schema because it
+  arrived after the contract's first release — the producer always sends
+  it.
 
 ## What a consumer must do
 

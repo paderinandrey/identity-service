@@ -54,9 +54,11 @@ type RoleAssignment struct {
 
 // Unified application user; referenced by GSH/DFM subgraphs by global id.
 type User struct {
-	ID           string            `json:"id"`
-	Email        string            `json:"email"`
-	Name         string            `json:"name"`
+	ID    string `json:"id"`
+	Email string `json:"email"`
+	Name  string `json:"name"`
+	// Job title from provisioning; empty when unknown.
+	Title        string            `json:"title"`
 	Active       bool              `json:"active"`
 	LastSignInAt *time.Time        `json:"lastSignInAt,omitempty"`
 	Roles        []*RoleAssignment `json:"roles"`

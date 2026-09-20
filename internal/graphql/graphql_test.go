@@ -321,7 +321,7 @@ func TestMe(t *testing.T) {
 	e := newEnv(t)
 	c := e.login(t, e.admin)
 
-	resp := c.query(t, `{ me { user { id email name } permissions } }`, nil)
+	resp := c.query(t, `{ me { user { id email name title } permissions } }`, nil)
 	if len(resp.Errors) > 0 {
 		t.Fatalf("me errors: %v", resp.Errors)
 	}
@@ -331,6 +331,9 @@ func TestMe(t *testing.T) {
 	}](t, resp.Data["me"])
 	if me.User["id"] != e.admin.ID || me.User["email"] != "admin@example.com" {
 		t.Errorf("me.user = %v", me.User)
+	}
+	if title, ok := me.User["title"]; !ok || title != "" {
+		t.Errorf("me.user.title = %q (present=%v), want an empty string for a user without a title", title, ok)
 	}
 	if len(me.Permissions) != 1 || me.Permissions[0] != ManagePermission {
 		t.Errorf("me.permissions = %v", me.Permissions)

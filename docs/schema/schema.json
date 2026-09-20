@@ -1203,6 +1203,13 @@
           "comment": "Session generation: bumped in the deactivation transaction; a session is valid only while the epoch it recorded at sign-in equals this value"
         },
         {
+          "name": "title",
+          "type": "text",
+          "nullable": false,
+          "default": "''::text",
+          "comment": "Job title from provisioning (SCIM title); empty when unknown"
+        },
+        {
           "name": "updated_at",
           "type": "timestamp with time zone",
           "nullable": false,
@@ -1314,6 +1321,16 @@
           "referenced_table": "",
           "columns": [
             "session_epoch"
+          ]
+        },
+        {
+          "name": "users_title_not_null",
+          "type": "n",
+          "def": "NOT NULL title",
+          "table": "public.users",
+          "referenced_table": "",
+          "columns": [
+            "title"
           ]
         },
         {

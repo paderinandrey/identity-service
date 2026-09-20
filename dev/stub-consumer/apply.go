@@ -39,6 +39,7 @@ type UserSnapshot struct {
 	ID      string `json:"id"`
 	Email   string `json:"email"`
 	Name    string `json:"name"`
+	Title   string `json:"title"` // optional in the schema: absent decodes as empty
 	Active  bool   `json:"active"`
 	Version int64  `json:"version"`
 }
@@ -102,6 +103,7 @@ type rawUser struct {
 	ID      *string `json:"id"`
 	Email   *string `json:"email"`
 	Name    *string `json:"name"`
+	Title   *string `json:"title"` // optional: nil is fine
 	Active  *bool   `json:"active"`
 	Version *int64  `json:"version"`
 }
@@ -140,6 +142,9 @@ func parse(body []byte) (Event, error) {
 	ev := Event{
 		ID: *raw.ID, Type: *raw.Type, SchemaVersion: *raw.SchemaVersion, OccurredAt: *raw.OccurredAt,
 		User: UserSnapshot{ID: *raw.User.ID, Email: *raw.User.Email, Name: *raw.User.Name, Active: *raw.User.Active, Version: *raw.User.Version},
+	}
+	if raw.User.Title != nil {
+		ev.User.Title = *raw.User.Title
 	}
 	switch {
 	case ev.SchemaVersion != schemaVersion:

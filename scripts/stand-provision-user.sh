@@ -46,7 +46,7 @@ if [ -n "$existing" ]; then
   echo "обновлён $USER_EMAIL (id $existing): externalId = $KC_USER_ID" >&2
 else
   code=$(curl_scim -o /dev/null -w '%{http_code}' -X POST "http://$HOST/scim/v2/Users" \
-    -d "{\"schemas\":[\"urn:ietf:params:scim:schemas:core:2.0:User\"],\"userName\":\"$USER_EMAIL\",\"displayName\":\"QA User\",\"externalId\":\"$KC_USER_ID\",\"active\":true}")
+    -d "{\"schemas\":[\"urn:ietf:params:scim:schemas:core:2.0:User\"],\"userName\":\"$USER_EMAIL\",\"displayName\":\"QA User\",\"title\":\"QA Engineer\",\"externalId\":\"$KC_USER_ID\",\"active\":true}")
   [ "$code" = 201 ] || { echo "FAIL: POST user -> $code" >&2; exit 1; }
   echo "создан $USER_EMAIL: externalId = $KC_USER_ID" >&2
 fi

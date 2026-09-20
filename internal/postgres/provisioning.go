@@ -76,7 +76,7 @@ func (s *Store) UpdateUser(ctx context.Context, id, email, name string) (*identi
 	var user *identity.User
 	err := s.inTx(ctx, func(tx pgx.Tx) error {
 		var err error
-		user, err = s.updateProfileTx(ctx, tx, id, email, name)
+		user, err = s.updateProfileTx(ctx, tx, id, email, name, nil)
 		return err
 	})
 	if err != nil {
@@ -86,12 +86,14 @@ func (s *Store) UpdateUser(ctx context.Context, id, email, name string) (*identi
 }
 
 // updateProfileTx is the profile update step shared by UpdateUser and
-// ProvisionApply: one UPDATE plus its event, inside the caller's transaction.
-func (s *Store) updateProfileTx(ctx context.Context, tx pgx.Tx, id, email, name string) (*identity.User, error) {
+// ProvisionApply: one UPDATE plus its event, inside the caller's
+// transaction. A nil title keeps the stored one (UpdateUser has no title
+// argument and must not erase what provisioning sent).
+func (s *Store) updateProfileTx(ctx context.Context, tx pgx.Tx, id, email, name string, title *string) (*identity.User, error) {
 	user, err := s.scanUser(tx.QueryRow(ctx,
-		`UPDATE users SET email = $2, name = $3, version = version + 1, updated_at = now()
+		`UPDATE users SET email = $2, name = $3, title = COALESCE($4, title), version = version + 1, updated_at = now()
 		 WHERE id = $1
-		 RETURNING `+userColumns, id, identity.NormalizeEmail(email), name))
+		 RETURNING `+userColumns, id, identity.NormalizeEmail(email), name, title))
 	if err != nil {
 		return nil, err
 	}
@@ -173,9 +175,12 @@ func (s *Store) ProvisionCreate(ctx context.Context, spec identity.Provision) (*
 	if spec.Email == nil {
 		return nil, errors.New("provision create: email is required")
 	}
-	name, active := "", true
+	name, title, active := "", "", true
 	if spec.Name != nil {
 		name = *spec.Name
+	}
+	if spec.Title != nil {
+		title = *spec.Title
 	}
 	if spec.Active != nil {
 		active = *spec.Active
@@ -184,8 +189,8 @@ func (s *Store) ProvisionCreate(ctx context.Context, spec identity.Provision) (*
 	err := s.inTx(ctx, func(tx pgx.Tx) error {
 		var err error
 		user, err = s.scanUser(tx.QueryRow(ctx,
-			`INSERT INTO users (email, name, active) VALUES ($1, $2, $3)
-			 RETURNING `+userColumns, identity.NormalizeEmail(*spec.Email), name, active))
+			`INSERT INTO users (email, name, title, active) VALUES ($1, $2, $3, $4)
+			 RETURNING `+userColumns, identity.NormalizeEmail(*spec.Email), name, title, active))
 		if err != nil {
 			return err
 		}
@@ -219,15 +224,18 @@ func (s *Store) ProvisionApply(ctx context.Context, id string, spec identity.Pro
 			return err
 		}
 		user = current
-		email, name := current.Email, current.Name
+		email, name, title := current.Email, current.Name, current.Title
 		if spec.Email != nil {
 			email = identity.NormalizeEmail(*spec.Email)
 		}
 		if spec.Name != nil {
 			name = *spec.Name
 		}
-		if email != current.Email || name != current.Name {
-			if user, err = s.updateProfileTx(ctx, tx, id, email, name); err != nil {
+		if spec.Title != nil {
+			title = *spec.Title
+		}
+		if email != current.Email || name != current.Name || title != current.Title {
+			if user, err = s.updateProfileTx(ctx, tx, id, email, name, &title); err != nil {
 				return err
 			}
 		}
@@ -268,7 +276,7 @@ func (s *Store) ListUsersPage(ctx context.Context, offset, limit int) ([]*identi
 	users := []*identity.User{}
 	for rows.Next() {
 		var u identity.User
-		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.Active, &u.Version, &u.SessionEpoch, &u.LastSignInAt, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.Title, &u.Active, &u.Version, &u.SessionEpoch, &u.LastSignInAt, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, 0, err
 		}
 		users = append(users, &u)

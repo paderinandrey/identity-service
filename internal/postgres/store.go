@@ -36,11 +36,11 @@ func NewStore(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
 }
 
-const userColumns = "id, email, name, active, version, session_epoch, last_sign_in_at, created_at, updated_at"
+const userColumns = "id, email, name, title, active, version, session_epoch, last_sign_in_at, created_at, updated_at"
 
 func (s *Store) scanUser(row pgx.Row) (*identity.User, error) {
 	var u identity.User
-	err := row.Scan(&u.ID, &u.Email, &u.Name, &u.Active, &u.Version, &u.SessionEpoch, &u.LastSignInAt, &u.CreatedAt, &u.UpdatedAt)
+	err := row.Scan(&u.ID, &u.Email, &u.Name, &u.Title, &u.Active, &u.Version, &u.SessionEpoch, &u.LastSignInAt, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, identity.ErrUserNotFound
 	}
@@ -59,7 +59,7 @@ func (s *Store) FindByID(ctx context.Context, id string) (*identity.User, error)
 // FindByIdentity returns the user linked to (provider, subject), or ErrUserNotFound.
 func (s *Store) FindByIdentity(ctx context.Context, provider, subject string) (*identity.User, error) {
 	return s.scanUser(s.pool.QueryRow(ctx,
-		`SELECT u.id, u.email, u.name, u.active, u.version, u.session_epoch, u.last_sign_in_at, u.created_at, u.updated_at
+		`SELECT u.id, u.email, u.name, u.title, u.active, u.version, u.session_epoch, u.last_sign_in_at, u.created_at, u.updated_at
 		 FROM users u
 		 JOIN user_identities i ON i.user_id = u.id
 		 WHERE i.provider = $1 AND i.subject = $2`, provider, subject))
