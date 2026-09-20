@@ -76,8 +76,10 @@ func run() error {
 		return seedAccess(ctx, cfg, args)
 	case "replay-users":
 		return replayUsers(ctx, cfg)
+	case "requeue-events":
+		return requeueEvents(ctx, cfg)
 	default:
-		return fmt.Errorf("unknown command %q (want serve, migrate, create-user, grant-role, revoke-role, seed-access or replay-users)", cmd)
+		return fmt.Errorf("unknown command %q (want serve, migrate, create-user, grant-role, revoke-role, seed-access, replay-users or requeue-events)", cmd)
 	}
 }
 
@@ -150,7 +152,15 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 
 	relay := events.NewRelay(pool, cfg.RabbitMQURL, cfg.EventsExchange, logger)
 	relay.SetMetrics(obs.Relay())
-	go relay.Run(ctx)
+	relay.SetRetention(cfg.OutboxRetention)
+	// The relay must finish settling its current batch before the pool
+	// closes, or an interrupted batch keeps its leases (Codex review,
+	// PR #6); serve waits for it below.
+	relayDone := make(chan struct{})
+	go func() {
+		defer close(relayDone)
+		relay.Run(ctx)
+	}()
 
 	srv := httpserver.New(cfg.ListenAddr, logger, cfg.ShutdownTimeout,
 		httpserver.WithWrapper(func(h http.Handler) http.Handler {
@@ -196,6 +206,11 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	)
 	if err := srv.Run(ctx); err != nil {
 		return err
+	}
+	select {
+	case <-relayDone:
+	case <-time.After(cfg.ShutdownTimeout):
+		logger.Warn("relay did not stop within the shutdown timeout")
 	}
 	logger.Info("stopped")
 	return nil
@@ -364,6 +379,23 @@ func seedAccess(ctx context.Context, cfg config.Config, args []string) error {
 		return err
 	}
 	fmt.Printf("seed-access: %d application(s) reconciled from %s\n", len(seedCfg.Applications), *file)
+	return nil
+}
+
+// requeueEvents returns quarantined outbox events to the queue — the
+// operator's recovery path once the cause recorded in last_error is fixed.
+func requeueEvents(ctx context.Context, cfg config.Config) error {
+	pool, err := postgres.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	n, err := postgres.NewStore(pool).RequeueQuarantined(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("requeue-events: %d quarantined event(s) returned to the queue\n", n)
 	return nil
 }
 

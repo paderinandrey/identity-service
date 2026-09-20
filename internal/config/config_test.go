@@ -184,6 +184,19 @@ func TestEventsConfig(t *testing.T) {
 	if err != nil || cfg.EventsExchange != "custom.events" {
 		t.Errorf("override: %q, err = %v", cfg.EventsExchange, err)
 	}
+	if cfg.OutboxRetention != DefaultOutboxRetention {
+		t.Errorf("default retention = %v, want %v", cfg.OutboxRetention, DefaultOutboxRetention)
+	}
+
+	t.Setenv(EnvOutboxRetention, "48h")
+	cfg, err = Load()
+	if err != nil || cfg.OutboxRetention != 48*time.Hour {
+		t.Errorf("OUTBOX_RETENTION=48h: %v, err = %v", cfg.OutboxRetention, err)
+	}
+	t.Setenv(EnvOutboxRetention, "-1h")
+	if _, err := Load(); err == nil {
+		t.Error("non-positive OUTBOX_RETENTION must be rejected")
+	}
 }
 
 func TestE2ELoginToken(t *testing.T) {

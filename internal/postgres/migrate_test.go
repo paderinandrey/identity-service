@@ -106,3 +106,63 @@ func TestMigration00007CollapsesOktaProviders(t *testing.T) {
 		t.Errorf("users after migration = %d, %v; want 3 untouched", users, err)
 	}
 }
+
+// TestMigration00010BackfillsOutboxUserID seeds outbox rows recorded
+// before user_id existed and proves the data migration lifts the user
+// out of the payload for them.
+func TestMigration00010BackfillsOutboxUserID(t *testing.T) {
+	ctx := t.Context()
+	admin, err := pgxpool.New(ctx, adminURL)
+	if err == nil {
+		err = admin.Ping(ctx)
+	}
+	if err != nil {
+		t.Skipf("PostgreSQL from docker-compose is not available: %v (run `mise run up`)", err)
+	}
+	t.Cleanup(admin.Close)
+	const dbName = "identity_migrate10_test"
+	url := "postgres://identity:identity@localhost:5433/" + dbName + "?sslmode=disable"
+	if _, err := admin.Exec(ctx, "DROP DATABASE IF EXISTS "+dbName+" WITH (FORCE)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+dbName); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = admin.Exec(context.Background(), "DROP DATABASE IF EXISTS "+dbName+" WITH (FORCE)") })
+
+	sqlDB, err := sql.Open("pgx", url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	goose.SetBaseFS(db.Migrations)
+	if err := goose.SetDialect("postgres"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.UpToContext(ctx, sqlDB, "migrations", 8); err != nil {
+		t.Fatalf("migrate to 8: %v", err)
+	}
+	if _, err := sqlDB.ExecContext(ctx, `
+		INSERT INTO users (id, email, name) VALUES ('44444444-4444-4444-4444-444444444444', 'old@example.com', 'Old');
+		INSERT INTO user_events_outbox (event_type, payload, published_at) VALUES
+		  ('identity.user.created', '{"user":{"id":"44444444-4444-4444-4444-444444444444"}}'::jsonb, NULL),
+		  ('identity.user.updated', '{"user":{"id":"44444444-4444-4444-4444-444444444444"}}'::jsonb, now()),
+		  ('identity.user.snapshot', '{}'::jsonb, NULL);`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Migrate(ctx, url); err != nil {
+		t.Fatalf("migrate to latest: %v", err)
+	}
+	var withUser, withoutUser int
+	if err := sqlDB.QueryRowContext(ctx,
+		`SELECT count(*) FILTER (WHERE user_id = '44444444-4444-4444-4444-444444444444'),
+		        count(*) FILTER (WHERE user_id IS NULL) FROM user_events_outbox`).Scan(&withUser, &withoutUser); err != nil {
+		t.Fatal(err)
+	}
+	// Pending row backfilled; published history and a payload without a
+	// user are left alone.
+	if withUser != 1 || withoutUser != 2 {
+		t.Errorf("backfill: rows with user = %d, without = %d; want 1 and 2 (only pending rows are backfilled)", withUser, withoutUser)
+	}
+}
