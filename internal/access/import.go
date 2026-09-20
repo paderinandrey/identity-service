@@ -2,6 +2,7 @@ package access
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -114,8 +115,15 @@ func Import(ctx context.Context, users ImportUsers, granter ImportGranter, actor
 			user, err = users.FindActiveByEmail(ctx, identity.NormalizeEmail(entry.Email))
 		}
 		if err != nil {
-			resolveErr[i] = err
-			continue
+			// Only "no such user" is an entry's own failure. A malformed id
+			// or a database error is not a fact about the file: abort here,
+			// before anything is written, rather than commit the rest
+			// around it (Codex review, PR #14).
+			if errors.Is(err, identity.ErrUserNotFound) {
+				resolveErr[i] = err
+				continue
+			}
+			return ImportReport{}, fmt.Errorf("import: entry %d (%s): %w — nothing was written", i+1, entry.Key(), err)
 		}
 		if prev, dup := seen[user.ID]; dup {
 			return ImportReport{}, fmt.Errorf("import: entries %d (%s) and %d (%s) are the same user %s; merge them and rerun — nothing was written",

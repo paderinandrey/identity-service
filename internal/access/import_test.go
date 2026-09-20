@@ -2,6 +2,7 @@ package access
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -42,6 +43,9 @@ func TestImportFileValidate(t *testing.T) {
 type fakeImportUsers map[string]*identity.User // key: id or email
 
 func (f fakeImportUsers) FindByID(_ context.Context, id string) (*identity.User, error) {
+	if id == "broken" {
+		return nil, errors.New("connection reset")
+	}
 	if u, ok := f[id]; ok {
 		return u, nil
 	}
@@ -102,6 +106,24 @@ func TestImportRefusesTwoEntriesForOneUser(t *testing.T) {
 	}
 	if len(granter.calls) != 0 {
 		t.Errorf("grants were attempted before the refusal: %v", granter.calls)
+	}
+}
+
+// A lookup failure that is not "no such user" — a malformed id, a
+// database error — is not the entry's fault and must abort before any
+// write, not be reported next to committed entries.
+func TestImportAbortsOnUnexpectedLookupFailure(t *testing.T) {
+	users, granter := importFixtures()
+	file := ImportFile{Assignments: []ImportEntry{
+		{Email: "bob@example.com", Roles: []string{"gsh/observer"}},
+		{ID: "broken", Roles: []string{"gsh/observer"}},
+	}}
+	_, err := Import(context.Background(), users, granter, "cli", file, false)
+	if err == nil || !strings.Contains(err.Error(), "connection reset") {
+		t.Fatalf("Import() = %v, want the lookup error", err)
+	}
+	if len(granter.calls) != 0 {
+		t.Errorf("grants were attempted despite the abort: %v", granter.calls)
 	}
 }
 
