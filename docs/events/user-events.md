@@ -107,8 +107,10 @@ not a library: its projection lives in memory.
 ## Changing the contract
 
 Adding an optional field to `user` is a compatible change: the schema,
-the examples and this document are updated together, `schemaVersion`
-stays `1`, and consumers that do not know the field ignore it (the
-published schema forbids unknown fields only for the producer's own
-check). Removing or renaming a field, or changing a type, bumps
-`schemaVersion` and is announced to every consumer before it ships.
+the examples and this document are updated together and `schemaVersion`
+stays `1`. The schema therefore allows properties it does not describe,
+and a consumer must ignore fields it does not know — even when it
+validates against an older copy of the schema. The producer is held to
+the documented field set by its own tests, not by the schema. Removing
+or renaming a field, or changing a type, bumps `schemaVersion` and is
+announced to every consumer before it ships.

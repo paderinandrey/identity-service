@@ -79,41 +79,60 @@ const schemaVersion = 1
 
 var errInvalid = errors.New("invalid event")
 
-// requiredFields mirrors the "required" lists of the published schema.
-// Presence is checked on the raw JSON: a missing boolean would otherwise
-// decode as false and deactivate the projected user (Codex review, PR #12).
-var (
-	requiredTop  = []string{"id", "type", "schemaVersion", "occurredAt", "user"}
-	requiredUser = []string{"id", "email", "name", "active", "version"}
-)
+// rawEvent decodes with pointer fields: a field that is missing or null
+// stays nil and is rejected, and a field of the wrong JSON type fails
+// to decode. A plain bool would turn a missing or null "active" into
+// false and deactivate the projected user (Codex review, PR #12).
+type rawEvent struct {
+	ID            *string    `json:"id"`
+	Type          *string    `json:"type"`
+	SchemaVersion *int       `json:"schemaVersion"`
+	OccurredAt    *time.Time `json:"occurredAt"`
+	User          *rawUser   `json:"user"`
+}
+
+type rawUser struct {
+	ID      *string `json:"id"`
+	Email   *string `json:"email"`
+	Name    *string `json:"name"`
+	Active  *bool   `json:"active"`
+	Version *int64  `json:"version"`
+}
 
 // parse decodes and validates a body against the contract's invariants.
 // The type is validated for shape only: an unknown type is still a full
 // snapshot and is applied like any other (compatibility rule).
 func parse(body []byte) (Event, error) {
-	var ev Event
-	var raw struct {
-		Fields map[string]json.RawMessage `json:"-"`
+	var raw rawEvent
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return Event{}, err
 	}
-	if err := json.Unmarshal(body, &raw.Fields); err != nil {
-		return ev, err
+	missing := func(name string) error { return errors.Join(errInvalid, errors.New("missing or null field "+name)) }
+	switch {
+	case raw.ID == nil:
+		return Event{}, missing("id")
+	case raw.Type == nil:
+		return Event{}, missing("type")
+	case raw.SchemaVersion == nil:
+		return Event{}, missing("schemaVersion")
+	case raw.OccurredAt == nil:
+		return Event{}, missing("occurredAt")
+	case raw.User == nil:
+		return Event{}, missing("user")
+	case raw.User.ID == nil:
+		return Event{}, missing("user.id")
+	case raw.User.Email == nil:
+		return Event{}, missing("user.email")
+	case raw.User.Name == nil:
+		return Event{}, missing("user.name")
+	case raw.User.Active == nil:
+		return Event{}, missing("user.active")
+	case raw.User.Version == nil:
+		return Event{}, missing("user.version")
 	}
-	for _, f := range requiredTop {
-		if _, ok := raw.Fields[f]; !ok {
-			return ev, errors.Join(errInvalid, errors.New("missing field "+f))
-		}
-	}
-	var user map[string]json.RawMessage
-	if err := json.Unmarshal(raw.Fields["user"], &user); err != nil {
-		return ev, errors.Join(errInvalid, err)
-	}
-	for _, f := range requiredUser {
-		if _, ok := user[f]; !ok {
-			return ev, errors.Join(errInvalid, errors.New("missing field user."+f))
-		}
-	}
-	if err := json.Unmarshal(body, &ev); err != nil {
-		return ev, err
+	ev := Event{
+		ID: *raw.ID, Type: *raw.Type, SchemaVersion: *raw.SchemaVersion, OccurredAt: *raw.OccurredAt,
+		User: UserSnapshot{ID: *raw.User.ID, Email: *raw.User.Email, Name: *raw.User.Name, Active: *raw.User.Active, Version: *raw.User.Version},
 	}
 	switch {
 	case ev.SchemaVersion != schemaVersion:

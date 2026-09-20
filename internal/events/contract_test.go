@@ -83,8 +83,7 @@ func TestSchemaRejectsDrift(t *testing.T) {
 	sch := compileSchema(t)
 	base, _ := json.Marshal(fixedPayload(t, TypeUpdated))
 	for name, mutate := range map[string]func(m map[string]any){
-		"unknown top-level field": func(m map[string]any) { m["source"] = "identity" },
-		"unknown user field":      func(m map[string]any) { m["user"].(map[string]any)["title"] = "x" },
+		"null active":             func(m map[string]any) { m["user"].(map[string]any)["active"] = nil },
 		"missing version":         func(m map[string]any) { delete(m["user"].(map[string]any), "version") },
 		"unknown schemaVersion":   func(m map[string]any) { m["schemaVersion"] = 2 },
 		"type outside the family": func(m map[string]any) { m["type"] = "user.updated" },
@@ -102,6 +101,62 @@ func TestSchemaRejectsDrift(t *testing.T) {
 				t.Errorf("schema accepted %s: %s", name, body)
 			}
 		})
+	}
+}
+
+// undocumentedFields lists payload keys the schema does not describe, at
+// the top level and under user. The schema itself allows unknown fields
+// so that consumers keep accepting compatible additions; the producer is
+// held to the documented set here instead (Codex review, PR #12).
+func undocumentedFields(t *testing.T, payload map[string]any) []string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(contractDir, "user-event.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Properties map[string]struct {
+			Properties map[string]any `json:"properties"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatal(err)
+	}
+	var extra []string
+	for k := range payload {
+		if _, ok := schema.Properties[k]; !ok {
+			extra = append(extra, k)
+		}
+	}
+	if user, ok := payload["user"].(map[string]any); ok {
+		for k := range user {
+			if _, ok := schema.Properties["user"].Properties[k]; !ok {
+				extra = append(extra, "user."+k)
+			}
+		}
+	}
+	return extra
+}
+
+func TestProducerSendsOnlyDocumentedFields(t *testing.T) {
+	for _, eventType := range []string{TypeCreated, TypeUpdated, TypeDeactivated, TypeReactivated, TypeSnapshot} {
+		body, _ := json.Marshal(fixedPayload(t, eventType))
+		var m map[string]any
+		if err := json.Unmarshal(body, &m); err != nil {
+			t.Fatal(err)
+		}
+		if extra := undocumentedFields(t, m); len(extra) != 0 {
+			t.Errorf("%s: payload carries fields the schema does not document: %v", eventType, extra)
+		}
+	}
+	// The check itself must notice an addition, at either level.
+	var m map[string]any
+	body, _ := json.Marshal(fixedPayload(t, TypeUpdated))
+	_ = json.Unmarshal(body, &m)
+	m["source"] = "identity"
+	m["user"].(map[string]any)["title"] = "x"
+	if extra := undocumentedFields(t, m); len(extra) != 2 {
+		t.Errorf("undocumentedFields = %v, want source and user.title", extra)
 	}
 }
 

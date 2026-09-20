@@ -2,10 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/paderinandrey/identity-service/docs/events/user-event.schema.json",
   "title": "identity-service user event",
-  "description": "Body of every message published to the identity.events exchange. Each event carries the full user snapshot; consumers apply it by version.",
+  "description": "Body of every message published to the identity.events exchange. Each event carries the full user snapshot; consumers apply it by version. Unknown properties are allowed on purpose: a schemaVersion-1 producer may add optional fields, and a consumer validating against an older copy of this schema must keep accepting events. The producer's own tests forbid undocumented fields.",
   "type": "object",
   "required": ["id", "type", "schemaVersion", "occurredAt", "user"],
-  "additionalProperties": false,
   "properties": {
     "id": {
       "type": "string",
@@ -29,7 +28,6 @@
     "user": {
       "type": "object",
       "required": ["id", "email", "name", "active", "version"],
-      "additionalProperties": false,
       "properties": {
         "id": {
           "type": "string",

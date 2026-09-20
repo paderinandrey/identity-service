@@ -94,12 +94,16 @@ func TestUnparsableBodiesAreRejected(t *testing.T) {
 		"missing active":      []byte(`{"id":"e5","type":"identity.user.updated","schemaVersion":1,"occurredAt":"2026-09-19T12:00:00Z","user":{"id":"u","email":"a@example.com","name":"A","version":9}}`),
 		"missing occurredAt":  []byte(`{"id":"e6","type":"identity.user.updated","schemaVersion":1,"user":{"id":"u","email":"a@example.com","name":"A","active":true,"version":1}}`),
 		"type outside family": body(t, "e7", "user.updated", ada),
+		// null passes a presence check but not a type check; a plain bool
+		// would decode it as false (Codex review, PR #12).
+		"null active":    []byte(`{"id":"e8","type":"identity.user.updated","schemaVersion":1,"occurredAt":"2026-09-19T12:00:00Z","user":{"id":"u","email":"a@example.com","name":"A","active":null,"version":9}}`),
+		"version string": []byte(`{"id":"e9","type":"identity.user.updated","schemaVersion":1,"occurredAt":"2026-09-19T12:00:00Z","user":{"id":"u","email":"a@example.com","name":"A","active":true,"version":"9"}}`),
 	} {
 		if got := p.Apply(msg); got != Rejected {
 			t.Errorf("%s = %s, want rejected", name, got)
 		}
 	}
-	if len(p.Users()) != 0 || p.Stats().Rejected != 7 {
+	if len(p.Users()) != 0 || p.Stats().Rejected != 9 {
 		t.Errorf("rejected bodies must not touch the projection: users=%v stats=%+v", p.Users(), p.Stats())
 	}
 }
