@@ -104,4 +104,9 @@ NetworkPolicy пускает на публичный порт identity поды 
   поды с меткой `app.kubernetes.io/name: graphql-router`; шаг стенда
   проверяет отказ чужому поду и доступ router. Это правило для любого
   сабграфа, который доверяет контексту: записано в README.
+- **P2, вход в router.** Тот же довод этажом выше: router пробрасывает
+  контекст, поэтому вход к нему — только из namespace gateway
+  (`networkPolicy` в чарте router по `kubernetes.io/metadata.name`,
+  `extraFrom` для per-env). Стенд проверяет отказ чужому поду напрямую
+  в router.
 

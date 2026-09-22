@@ -97,6 +97,9 @@ has "kind: Deployment" || { echo "FAIL: нет Deployment router"; exit 1; }
 has "kind: Service" || { echo "FAIL: нет Service router"; exit 1; }
 has "name: ci-graphql-router-config" || { echo "FAIL: ConfigMap композиции не подключён по умолчанию"; exit 1; }
 has "app.kubernetes.io/name: graphql-router" || { echo "FAIL: метка graphql-router, на которую ссылается NetworkPolicy"; exit 1; }
+# Router пробрасывает доверенный контекст — вход к нему только из namespace gateway.
+has "kind: NetworkPolicy" || { echo "FAIL: нет NetworkPolicy у router"; exit 1; }
+has 'kubernetes.io/metadata.name: "envoy-gateway-system"' || { echo "FAIL: NetworkPolicy router не ссылается на namespace gateway"; exit 1; }
 out=$(helm template ci charts/graphql-router --set configMapName=custom-config)
 has "name: custom-config" || { echo "FAIL: configMapName не переопределяется"; exit 1; }
 echo "PASS: чарт router рендерится, ConfigMap композиции подключаем"

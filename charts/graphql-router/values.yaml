@@ -55,3 +55,11 @@ securityContext:
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# The router forwards the trusted x-identity-* context to subgraphs, so
+# it must only be reachable from the gateway that sets that context:
+# a pod posting to the router directly could forge it. Ingress only.
+networkPolicy:
+  enabled: true
+  gatewayNamespace: envoy-gateway-system
+  extraFrom: []

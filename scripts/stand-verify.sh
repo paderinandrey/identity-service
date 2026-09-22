@@ -280,6 +280,11 @@ code=$(kubectl exec -n "$NS" "$PROBE_PLAIN" -- curl -s -o /dev/null -w '%{http_c
 code=$(kubectl exec -n "$NS" "$PROBE_ALLOWED" -- curl -s -o /dev/null -w '%{http_code}' --max-time 5 "${forge[@]}" "$MSG" 2>/dev/null || true)
 [ "$code" = 200 ] || fail "router не достучался до messenger -> $code"
 pass "messenger закрыт сетевой политикой: чужой под — соединения нет, router — 200"
+# Сам router принимает только gateway: иначе подделанный контекст можно
+# отдать ему напрямую, и для messenger он придёт «от router».
+code=$(kubectl exec -n "$NS" "$PROBE_PLAIN" -- curl -s -o /dev/null -w '%{http_code}' --max-time 5 "${forge[@]}" "http://$RELEASE-graphql-router:3002/graphql" 2>/dev/null || true)
+[ "$code" = 000 ] || fail "чужой под достучался до router напрямую -> $code"
+pass "router закрыт сетевой политикой: напрямую из чужого пода — соединения нет, через gateway — работает (шаг 10)"
 
 step "16. Первая установка чарта: хук миграций в пустом namespace"
 # Стенд держит зависимости в том же релизе и хук там выключен; здесь чарт
