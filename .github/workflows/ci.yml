@@ -93,6 +93,18 @@ jobs:
       # Same check as `mise run schema:check`: migrate, then tbls diff.
       - run: mise run schema:check
 
+  messenger:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dev/messenger
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: dev/messenger/go.mod
+      - run: go vet ./... && go test -race ./...
+
   vuln:
     runs-on: ubuntu-latest
     steps:

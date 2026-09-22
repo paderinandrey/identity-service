@@ -56,8 +56,8 @@ config:
 debugEcho:
   enabled: true
 
-# The stand's router lives in this namespace and calls the subgraph on the
-# public port; stand scripts reach the internal port (e2e login for the
+# The stand's router (its own release, charts/graphql-router) lives in this
+# namespace and calls the subgraph on the public port; stand scripts reach the internal port (e2e login for the
 # supergraph composition) from ad-hoc pods carrying the tools label —
 # stand-verify proves an unlabeled pod cannot.
 networkPolicy:
@@ -65,7 +65,7 @@ networkPolicy:
     extraFrom:
       - podSelector:
           matchLabels:
-            app.kubernetes.io/component: router
+            app.kubernetes.io/name: graphql-router
   internal:
     extraFrom:
       - podSelector:
@@ -80,8 +80,10 @@ gateway:
   hostnames:
     - identity.localhost
   # /graphql ведёт в router, а не напрямую в сервис: сабграфы за ним.
+  # Router — отдельный релиз стенда (charts/graphql-router), не зависимость
+  # этого чарта: он не может принадлежать одному из сабграфов.
   protectedBackendRefs:
-    - name: identity-stand-identity-service-router
+    - name: identity-stand-graphql-router
       port: 3002
 
 dependencies:
@@ -131,32 +133,6 @@ dependencies:
       initialDelaySeconds: 15
       periodSeconds: 10
       failureThreshold: 12
-  router:
-    enabled: true
-    # Cosmo Router: композиция суперграфа статическая (файл в ConfigMap),
-    # schema registry для стенда не нужен.
-    image: ghcr.io/wundergraph/cosmo/router:latest
-    port: 3002
-    portName: http
-    env:
-      - name: EXECUTION_CONFIG_FILE_PATH
-        value: /etc/router/supergraph.json
-      - name: CONFIG_PATH
-        value: /etc/router/config.yaml
-    volumeMounts:
-      - name: config
-        mountPath: /etc/router
-    volumes:
-      - name: config
-        configMap:
-          name: router-config
-    readinessProbe:
-      httpGet:
-        path: /health
-        port: 3002
-      initialDelaySeconds: 5
-      periodSeconds: 5
-      failureThreshold: 20
   stub-consumer:
     enabled: true
     # Референсный консьюмер событий (dev/stub-consumer): своя очередь,
@@ -169,6 +145,20 @@ dependencies:
     env:
       - name: RABBITMQ_URL
         value: "amqp://identity:identity@identity-stand-identity-service-rabbitmq:5672/"
+    readinessProbe:
+      httpGet:
+        path: /healthz
+        port: 8080
+      initialDelaySeconds: 3
+      periodSeconds: 5
+  messenger:
+    enabled: true
+    # Третий сабграф (dev/messenger): Message со ссылками на User,
+    # авторизация по x-identity-permissions внутри сервиса.
+    image: messenger:dev
+    pullPolicy: Never
+    port: 8080
+    portName: http
     readinessProbe:
       httpGet:
         path: /healthz

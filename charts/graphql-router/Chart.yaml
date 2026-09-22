@@ -1,0 +1,6 @@
+apiVersion: v2
+name: graphql-router
+description: Cosmo Router in front of the federated subgraphs (identity, GSH, DFM, ...). Owns no schema — the supergraph is composed outside and handed over as a ConfigMap.
+type: application
+version: 0.1.0
+appVersion: "0.346"

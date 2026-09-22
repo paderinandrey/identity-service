@@ -212,7 +212,7 @@ PROBE_PLAIN="probe-plain-$RANDOM"
 probe_cleanup_pods() { kubectl delete pod -n "$NS" "$PROBE_ALLOWED" "$PROBE_PLAIN" --ignore-not-found --wait=false >/dev/null 2>&1 || true; }
 trap 'probe_cleanup_pods; kill $PF_PID 2>/dev/null; rm -f "$COOKIE_JAR"' EXIT
 kubectl run "$PROBE_ALLOWED" -n "$NS" --restart=Never --image=curlimages/curl:latest \
-  --labels=identity-stand/tools=true,app.kubernetes.io/component=router --command -- sleep 600 >/dev/null
+  --labels=identity-stand/tools=true,app.kubernetes.io/name=graphql-router --command -- sleep 600 >/dev/null
 kubectl run "$PROBE_PLAIN" -n "$NS" --restart=Never --image=curlimages/curl:latest --command -- sleep 600 >/dev/null
 kubectl wait pod/"$PROBE_ALLOWED" pod/"$PROBE_PLAIN" -n "$NS" --for=condition=Ready --timeout=60s >/dev/null
 probe_curl() { kubectl exec -n "$NS" "$1" -- curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$2" 2>/dev/null || true; }
@@ -249,7 +249,29 @@ grep -q "$uid" <<< "$forged" || fail "upstream не получил id сесси
 grep -qi '"x-identity-permissions":""' <<< "$forged" || fail "пустой заголовок прав не заменил подделанный: $forged"
 pass "upstream получил id сессии и пустые права; подделка не прошла"
 
-step "15. Первая установка чарта: хук миграций в пустом namespace"
+step "15. Третий сабграф: messenger через router, права из заголовка"
+# stand-qa носит messenger/member; его cookie берётся e2e-входом с
+# внутреннего порта из разрешённого пода. Значение cookie не печатается.
+E2E_TOKEN="${E2E_TOKEN:-local-dev-e2e-token-0123456789abcdef}"
+sq_cookie=$(kubectl exec -n "$NS" "$PROBE_ALLOWED" -- sh -c "curl -s -D - -o /dev/null -X POST $SVC:8081/internal/e2e/login \
+  -H 'Authorization: Bearer $E2E_TOKEN' -d '{\"email\":\"stand-qa@example.com\"}' \
+  | grep -i '^set-cookie' | sed 's/.*__identity_session=\([^;]*\).*/\1/'" 2>/dev/null)
+[ -n "$sq_cookie" ] || fail "e2e-вход для stand-qa не выдал cookie"
+qa_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<< "$me")
+gql() { curl -s "${RESOLVE[@]}" -X POST "http://$HOST/graphql" -H 'Content-Type: application/json' -H "Origin: http://$HOST" "$@"; }
+sent=$(gql -b "__identity_session=$sq_cookie" \
+  -d "{\"query\":\"mutation { sendMessage(recipientId: \\\"$qa_id\\\", text: \\\"hello from the stand\\\") { id author { email } recipient { email } } }\"}")
+grep -q '"author":{"email":"stand-qa@example.com"}' <<< "$sent" || fail "sendMessage: автор не разрешён через identity: $sent"
+grep -q "\"recipient\":{\"email\":\"$USER_EMAIL\"}" <<< "$sent" || fail "sendMessage: получатель не разрешён: $sent"
+denied=$(gql "${COOKIE[@]}" \
+  -d "{\"query\":\"mutation { sendMessage(recipientId: \\\"$qa_id\\\", text: \\\"forbidden\\\") { id } }\"}")
+grep -q 'FORBIDDEN' <<< "$denied" || fail "qa без роли смог отправить сообщение: $denied"
+inbox=$(gql "${COOKIE[@]}" -d '{"query":"{ inbox { text author { email } } }"}')
+grep -q '"text":"hello from the stand"' <<< "$inbox" || fail "inbox qa не содержит сообщения: $inbox"
+grep -q 'forbidden' <<< "$inbox" && fail "отклонённое сообщение попало в inbox: $inbox"
+pass "три сабграфа: messenger сохранил сообщение, identity разрешил автора и получателя; без права — FORBIDDEN; inbox qa получил его"
+
+step "16. Первая установка чарта: хук миграций в пустом namespace"
 # Стенд держит зависимости в том же релизе и хук там выключен; здесь чарт
 # ставится как в проде — в пустой namespace, с внешней базой (отдельная БД
 # в PostgreSQL стенда) — и хук обязан отработать сам, без ресурсов релиза.

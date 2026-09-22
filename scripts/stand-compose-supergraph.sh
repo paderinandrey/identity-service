@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Композиция суперграфа для стенда: тянет SDL обоих сабграфов из кластера
-# и кладёт execution config плюс конфигурацию router'а в ConfigMap.
+# Композиция суперграфа для стенда: SDL identity — с живого сервиса, схемы
+# остальных сабграфов — из их файлов; execution config и конфигурация
+# router'а кладутся в ConfigMap релиза charts/graphql-router.
+#
+# Чтобы добавить сабграф: строка в SUBGRAPHS ниже и зависимость стенда в
+# values-local.yaml.
 #
 # На стенде композиция статическая: schema registry (Cosmo Studio) не нужен,
 # а перекомпозиция — это перезапуск router'а.
@@ -32,7 +36,7 @@ kubectl run "create-user-$RANDOM" -n "$NS" --rm -i --restart=Never --quiet \
 POD="sdl-probe-$RANDOM"
 kubectl delete pod -n "$NS" -l identity-stand/probe=sdl --ignore-not-found --wait=true >/dev/null 2>&1
 kubectl run "$POD" -n "$NS" --restart=Never --image=curlimages/curl:latest \
-  --labels=identity-stand/probe=sdl,identity-stand/tools=true,app.kubernetes.io/component=router \
+  --labels=identity-stand/probe=sdl,identity-stand/tools=true,app.kubernetes.io/name=graphql-router \
   --command -- sleep 300 >/dev/null
 trap 'kubectl delete pod -n "$NS" "$POD" --ignore-not-found --wait=false >/dev/null 2>&1; rm -rf "$WORK"' EXIT
 kubectl wait pod/"$POD" -n "$NS" --for=condition=Ready --timeout=60s >/dev/null
@@ -48,20 +52,21 @@ import json,sys
 print(json.load(open('$WORK/identity.json'))['data']['_service']['sdl'])
 " > "$WORK/identity.graphql"
 
-cp dev/stub-subgraph/schema.graphqls "$WORK/orders.graphql"
-
-cat > "$WORK/compose.yaml" <<YAML
-version: 1
-subgraphs:
-  - name: identity
-    routing_url: http://$RELEASE-identity-service:8080/graphql
-    schema:
-      file: $WORK/identity.graphql
-  - name: orders
-    routing_url: http://$RELEASE-identity-service-stub-subgraph:8080/graphql
-    schema:
-      file: $WORK/orders.graphql
-YAML
+# name | routing URL | schema file ("-" = the identity SDL fetched above)
+SUBGRAPHS="
+identity  http://$RELEASE-identity-service:8080/graphql            -
+orders    http://$RELEASE-identity-service-stub-subgraph:8080/graphql dev/stub-subgraph/schema.graphqls
+messenger http://$RELEASE-identity-service-messenger:8080/graphql     dev/messenger/schema.graphqls
+"
+{
+  echo "version: 1"
+  echo "subgraphs:"
+  while read -r name url schema; do
+    [ -n "$name" ] || continue
+    if [ "$schema" = "-" ]; then file="$WORK/identity.graphql"; else file="$PWD/$schema"; fi
+    printf '  - name: %s\n    routing_url: %s\n    schema:\n      file: %s\n' "$name" "$url" "$file"
+  done <<< "$SUBGRAPHS"
+} > "$WORK/compose.yaml"
 
 npx --yes wgc@latest router compose -i "$WORK/compose.yaml" -o "$WORK/supergraph.json" | tail -1
 
@@ -92,9 +97,12 @@ headers:
         named: x-identity-permissions
 YAML
 
-kubectl create configmap router-config -n "$NS" \
+ROUTER="${ROUTER:-$RELEASE-graphql-router}"
+kubectl create configmap "$ROUTER-config" -n "$NS" \
   --from-file=supergraph.json="$WORK/supergraph.json" \
   --from-file=config.yaml="$WORK/config.yaml" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-kubectl rollout restart "deploy/$RELEASE-identity-service-router" -n "$NS" >/dev/null 2>&1 || true
-echo "суперграф скомпонован и загружен"
+# Релиз router может ещё не существовать (первый stand-up): тогда его
+# поставит stand-up сразу после композиции.
+kubectl rollout restart "deploy/$ROUTER" -n "$NS" >/dev/null 2>&1 || true
+echo "суперграф из $(grep -c '^  - name:' "$WORK/compose.yaml") сабграфов скомпонован и загружен"

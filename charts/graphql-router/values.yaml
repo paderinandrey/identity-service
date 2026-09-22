@@ -1,0 +1,53 @@
+# Cosmo Router. The router belongs to no subgraph: it is released on its
+# own, and every subgraph only registers itself in the composition that
+# fills the ConfigMap below.
+
+replicaCount: 1
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/wundergraph/cosmo/router
+  pullPolicy: IfNotPresent
+  # Pin per environment; the stand tracks the latest release.
+  tag: "latest"
+
+service:
+  type: ClusterIP
+  port: 3002
+
+# ConfigMap with `supergraph.json` (execution config from `wgc router
+# compose`) and `config.yaml` (router configuration). Created by the
+# composition step, not by this chart: recomposing must not mean
+# re-rendering the release. Defaults to <fullname>-config.
+configMapName: ""
+configMountPath: /etc/router
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  failureThreshold: 20
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -74,7 +74,7 @@ echo "PASS: маршруты, политика ext-auth и ServiceMonitor на �
 
 echo "== рендер оверлея стенда"
 out=$(helm template ci "$CHART" -f "$CHART/values-local.yaml")
-for component in postgresql redis rabbitmq keycloak echo stub-subgraph stub-consumer router; do
+for component in postgresql redis rabbitmq keycloak echo stub-subgraph stub-consumer messenger; do
   has "component: $component" || { echo "FAIL: в стенде нет $component"; exit 1; }
 done
 # У echo-upstream стенда своя SecurityPolicy — она тоже обязана звать
@@ -83,4 +83,16 @@ done
 out=$(helm template ci "$CHART" -f "$CHART/values-local.yaml" -s templates/debug-echo.yaml)
 has "port: 8081" || { echo "FAIL: ext-auth echo-политики не смотрит на внутренний порт"; exit 1; }
 has "port: 8080" && { echo "FAIL: echo-политика ссылается на публичный порт"; exit 1; }
+has "component: router" && { echo "FAIL: router больше не зависимость чарта identity-service"; exit 1; }
 echo "PASS: стенд рендерит все зависимости, echo-политика на внутреннем порту"
+
+echo "== чарт graphql-router"
+helm lint charts/graphql-router
+out=$(helm template ci charts/graphql-router --set fullnameOverride=ci-graphql-router)
+has "kind: Deployment" || { echo "FAIL: нет Deployment router"; exit 1; }
+has "kind: Service" || { echo "FAIL: нет Service router"; exit 1; }
+has "name: ci-graphql-router-config" || { echo "FAIL: ConfigMap композиции не подключён по умолчанию"; exit 1; }
+has "app.kubernetes.io/name: graphql-router" || { echo "FAIL: метка graphql-router, на которую ссылается NetworkPolicy"; exit 1; }
+out=$(helm template ci charts/graphql-router --set configMapName=custom-config)
+has "name: custom-config" || { echo "FAIL: configMapName не переопределяется"; exit 1; }
+echo "PASS: чарт router рендерится, ConfigMap композиции подключаем"
