@@ -7,11 +7,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/99designs/gqlgen/graphql/handler"
-	"github.com/99designs/gqlgen/graphql/handler/transport"
-
-	"messenger/generated"
 )
 
 func TestAuthorizationRules(t *testing.T) {
@@ -36,17 +31,23 @@ type gqlResp struct {
 	} `json:"errors"`
 }
 
-func newServer() http.Handler {
-	srv := handler.New(generated.NewExecutableSchema(generated.Config{Resolvers: &Resolver{store: NewStore()}}))
-	srv.AddTransport(transport.POST{})
-	return withIdentity(srv)
+func newTestServer() http.Handler {
+	return withIdentity(newServer(NewStore(), originSet("http://app.example.com")))
 }
 
 func query(t *testing.T, h http.Handler, userID, perms, q string) gqlResp {
 	t.Helper()
+	return queryFrom(t, h, userID, perms, "", q)
+}
+
+func queryFrom(t *testing.T, h http.Handler, userID, perms, origin, q string) gqlResp {
+	t.Helper()
 	body, _ := json.Marshal(map[string]string{"query": q})
 	req := httptest.NewRequest(http.MethodPost, "/graphql", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	if origin != "" {
+		req.Header.Set("Origin", origin)
+	}
 	if userID != "" {
 		req.Header.Set("X-Identity-User-Id", userID)
 	}
@@ -71,7 +72,7 @@ func code(r gqlResp) string {
 // message the recipient sees, a user without it is refused and nothing is
 // stored, and a third user's inbox stays empty.
 func TestSendAndInboxThroughTheSchema(t *testing.T) {
-	h := newServer()
+	h := newTestServer()
 	send := `mutation { sendMessage(recipientId: "bob", text: "hi") { id author { id } recipient { id } } }`
 
 	if got := code(query(t, h, "", "", send)); got != "UNAUTHENTICATED" {
@@ -94,5 +95,30 @@ func TestSendAndInboxThroughTheSchema(t *testing.T) {
 	}
 	if got := code(query(t, h, "", "", inbox)); got != "UNAUTHENTICATED" {
 		t.Errorf("anonymous inbox: code=%q", got)
+	}
+}
+
+// A cross-site page carrying a valid session must not be able to send:
+// the router forwards the browser's Origin, and mutations from anywhere
+// but the configured origins are refused before the resolver runs.
+// Reads and non-browser callers (no Origin) are left alone.
+func TestMutationsRequireTrustedOrigin(t *testing.T) {
+	h := newTestServer()
+	perms := "messenger:messages.send"
+	send := `mutation { sendMessage(recipientId: "bob", text: "csrf") { id } }`
+	if got := code(queryFrom(t, h, "ada", perms, "https://evil.example.com", send)); got != "FORBIDDEN" {
+		t.Errorf("mutation from a foreign origin: code=%q, want FORBIDDEN", got)
+	}
+	if got := string(query(t, h, "bob", "", `{ inbox { text } }`).Data["inbox"]); got != "[]" {
+		t.Errorf("refused mutation persisted a message: %s", got)
+	}
+	if got := code(queryFrom(t, h, "ada", perms, "http://app.example.com", send)); got != "" {
+		t.Errorf("mutation from the trusted origin: code=%q", got)
+	}
+	if got := code(queryFrom(t, h, "ada", perms, "", send)); got != "" {
+		t.Errorf("mutation without Origin (non-browser): code=%q", got)
+	}
+	if got := code(queryFrom(t, h, "bob", "", "https://evil.example.com", `{ inbox { text } }`)); got != "" {
+		t.Errorf("read from a foreign origin refused: code=%q", got)
 	}
 }

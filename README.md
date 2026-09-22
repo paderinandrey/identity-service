@@ -492,7 +492,9 @@ supergraph; it belongs to no subgraph, which is why it is not a
 dependency of this chart. The stand composes three subgraphs — this
 service, a stub for GSH/DFM (`dev/stub-subgraph/`, owns `Order`) and a
 small messenger (`dev/messenger/`, owns `Message`, checks
-`messenger:messages.send` from the forwarded context) — with
+`messenger:messages.send` from the forwarded context and refuses
+mutations from a foreign `Origin`, as every cookie-authenticated
+subgraph must) — with
 `scripts/stand-compose-supergraph.sh`, which lists them in one place and
 fills the router's ConfigMap; adding a subgraph is one line there plus a
 stand dependency in `values-local.yaml`. Applications and roles of the

@@ -27,8 +27,7 @@ NetworkPolicy пускает на публичный порт identity поды 
   скриптом стенда; `print-sdl` для identity — отдельный пункт бэклога.
 - Прод-чарт router со всеми ручками (TLS, метрики, HPA) — минимум для
   стенда, с местом под остальное.
-- CSRF в messenger: Origin-проверка мутаций — обязанность каждого
-  сабграфа; в стабе не реализуется, документ контекста это оговаривает.
+- Персистентность и подписки в messenger.
 - Персистентность сообщений, подписки, консьюмер событий в messenger
   (`author`/`recipient` разрешаются федерацией, проекция не нужна).
 
@@ -109,4 +108,9 @@ NetworkPolicy пускает на публичный порт identity поды 
   (`networkPolicy` в чарте router по `kubernetes.io/metadata.name`,
   `extraFrom` для per-env). Стенд проверяет отказ чужому поду напрямую
   в router.
+- **P1, CSRF в messenger.** Я записал Origin-проверку в Non-Goals — зря:
+  стаб служит образцом сабграфа, а мутация по cookie без проверки Origin
+  — ровно то, что AGENTS.md запрещает. Messenger получил ту же
+  operation-level проверку, что identity (`ALLOWED_ORIGINS`, отсутствие
+  Origin = не-браузер); тесты и шаг стенда с чужим Origin через router.
 

@@ -159,6 +159,11 @@ dependencies:
     pullPolicy: Never
     port: 8080
     portName: http
+    env:
+      # Same browser origin as the identity subgraph: the router forwards
+      # Origin, and messenger refuses mutations from anywhere else.
+      - name: ALLOWED_ORIGINS
+        value: "http://identity.localhost"
     # Trusts x-identity-* from the router, so only the router may reach it.
     ingressFrom:
       - podSelector:

@@ -266,9 +266,15 @@ grep -q "\"recipient\":{\"email\":\"$USER_EMAIL\"}" <<< "$sent" || fail "sendMes
 denied=$(gql "${COOKIE[@]}" \
   -d "{\"query\":\"mutation { sendMessage(recipientId: \\\"$qa_id\\\", text: \\\"forbidden\\\") { id } }\"}")
 grep -q 'FORBIDDEN' <<< "$denied" || fail "qa без роли смог отправить сообщение: $denied"
+# CSRF: та же мутация с валидной сессией stand-qa, но с чужим Origin —
+# router пробрасывает Origin, messenger отказывает до резолвера.
+csrf=$(curl -s "${RESOLVE[@]}" -X POST "http://$HOST/graphql" -H 'Content-Type: application/json' -H 'Origin: https://evil.example.com' \
+  -b "__identity_session=$sq_cookie" \
+  -d "{\"query\":\"mutation { sendMessage(recipientId: \\\"$qa_id\\\", text: \\\"csrf\\\") { id } }\"}")
+grep -q 'FORBIDDEN' <<< "$csrf" || fail "мутация с чужим Origin прошла: $csrf"
 inbox=$(gql "${COOKIE[@]}" -d '{"query":"{ inbox { text author { email } } }"}')
 grep -q '"text":"hello from the stand"' <<< "$inbox" || fail "inbox qa не содержит сообщения: $inbox"
-grep -q 'forbidden' <<< "$inbox" && fail "отклонённое сообщение попало в inbox: $inbox"
+grep -q 'forbidden\|csrf' <<< "$inbox" && fail "отклонённое сообщение попало в inbox: $inbox"
 pass "три сабграфа: messenger сохранил сообщение, identity разрешил автора и получателя; без права — FORBIDDEN; inbox qa получил его"
 # messenger верит x-identity-* — значит к нему напрямую можно только из
 # router (probe-под с меткой graphql-router его изображает), чужой под с
