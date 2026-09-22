@@ -104,6 +104,7 @@ type ComplexityRoot struct {
 		LastSignInAt func(childComplexity int) int
 		Name         func(childComplexity int) int
 		Roles        func(childComplexity int) int
+		Title        func(childComplexity int) int
 	}
 
 	UserConnection struct {
@@ -417,6 +418,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.User.Roles(childComplexity), true
+	case "User.title":
+		if e.ComplexityRoot.User.Title == nil {
+			break
+		}
+
+		return e.ComplexityRoot.User.Title(childComplexity), true
 
 	case "UserConnection.nodes":
 		if e.ComplexityRoot.UserConnection.Nodes == nil {
@@ -529,6 +536,8 @@ type User @key(fields: "id") {
   id: ID!
   email: String!
   name: String!
+  "Job title from provisioning; empty when unknown."
+  title: String!
   active: Boolean!
   lastSignInAt: Time
   roles: [RoleAssignment!]!
@@ -766,6 +775,8 @@ func (ec *executionContext) childFields_User(ctx context.Context, field graphql.
 		return ec.fieldContext_User_email(ctx, field)
 	case "name":
 		return ec.fieldContext_User_name(ctx, field)
+	case "title":
+		return ec.fieldContext_User_title(ctx, field)
 	case "active":
 		return ec.fieldContext_User_active(ctx, field)
 	case "lastSignInAt":
@@ -2146,6 +2157,29 @@ func (ec *executionContext) _User_name(ctx context.Context, field graphql.Collec
 	)
 }
 func (ec *executionContext) fieldContext_User_name(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("User", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _User_title(ctx context.Context, field graphql.CollectedField, obj *model.User) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_User_title(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Title, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_User_title(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("User", field, false, false, errors.New("field of type String does not have child fields"))
 }
 
@@ -4050,6 +4084,11 @@ func (ec *executionContext) _User(ctx context.Context, sel ast.SelectionSet, obj
 			}
 		case "name":
 			out.Values[i] = ec._User_name(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
+		case "title":
+			out.Values[i] = ec._User_title(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}

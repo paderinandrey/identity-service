@@ -138,3 +138,40 @@ func TestReplayIsIdempotent(t *testing.T) {
 		t.Errorf("users = %v, want ada and bob", p.Users())
 	}
 }
+
+// title is optional in the schema: a snapshot without it is applied with
+// an empty title, one with it projects the value.
+func TestTitleIsOptional(t *testing.T) {
+	p := NewProjection()
+	if got := p.Apply(rawBody(`{"id":"` + ada.ID + `","email":"a@example.com","name":"A","active":true,"version":1}`)); got != Applied {
+		t.Fatalf("snapshot without title = %s, want applied", got)
+	}
+	titled := ada
+	titled.Version, titled.Title = 2, "Staff Engineer"
+	if got := p.Apply(body(t, eid(31), "identity.user.updated", titled)); got != Applied {
+		t.Fatalf("snapshot with title = %s, want applied", got)
+	}
+	if u, _ := p.User(ada.ID); u.Title != "Staff Engineer" {
+		t.Errorf("projected title = %q", u.Title)
+	}
+
+	// A newer snapshot without the field (an older producer replica during
+	// a rollout) keeps the projected title; an explicit empty title clears it.
+	if got := p.Apply(rawBodyVersion(`{"id":"`+ada.ID+`","email":"a@example.com","name":"A","active":true,"version":3}`, 41)); got != Applied {
+		t.Fatalf("newer snapshot without title = %s, want applied", got)
+	}
+	if u, _ := p.User(ada.ID); u.Title != "Staff Engineer" || u.Version != 3 {
+		t.Errorf("absent title must be preserved: %+v", u)
+	}
+	cleared := ada
+	cleared.Version, cleared.Title = 4, ""
+	p.Apply(body(t, eid(42), "identity.user.updated", cleared))
+	if u, _ := p.User(ada.ID); u.Title != "" {
+		t.Errorf("explicit empty title must clear: %+v", u)
+	}
+}
+
+// rawBodyVersion is rawBody with a distinct event id per call.
+func rawBodyVersion(user string, n int) []byte {
+	return []byte(`{"id":"` + eid(n) + `","type":"identity.user.updated","schemaVersion":1,"occurredAt":"2026-09-19T12:00:00Z","user":` + user + `}`)
+}

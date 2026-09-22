@@ -37,6 +37,7 @@ var (
 type Provision struct {
 	Email *string
 	Name  *string
+	Title *string
 	// Active nil leaves the flag alone; a PATCH that does not mention
 	// active must not undo a deactivation that happened in between.
 	Active *bool
@@ -54,9 +55,12 @@ type ProvisionOutcome struct {
 
 // User is a unified application user.
 type User struct {
-	ID      string
-	Email   string
-	Name    string
+	ID    string
+	Email string
+	Name  string
+	// Title is the job title provisioning sends (SCIM "title"); empty when
+	// unknown. Carried to downstream projections like name and email.
+	Title   string
 	Active  bool
 	Version int64
 	// SessionEpoch is the user's session generation. A session records the

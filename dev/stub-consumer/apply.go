@@ -32,6 +32,9 @@ type Event struct {
 	SchemaVersion int          `json:"schemaVersion"`
 	OccurredAt    time.Time    `json:"occurredAt"`
 	User          UserSnapshot `json:"user"`
+	// titleProvided records whether the body carried user.title at all:
+	// an optional field that is absent means "not provided", not "empty".
+	titleProvided bool
 }
 
 // UserSnapshot is the full user state every event carries.
@@ -39,6 +42,7 @@ type UserSnapshot struct {
 	ID      string `json:"id"`
 	Email   string `json:"email"`
 	Name    string `json:"name"`
+	Title   string `json:"title"` // optional in the schema: absent decodes as empty
 	Active  bool   `json:"active"`
 	Version int64  `json:"version"`
 }
@@ -102,6 +106,7 @@ type rawUser struct {
 	ID      *string `json:"id"`
 	Email   *string `json:"email"`
 	Name    *string `json:"name"`
+	Title   *string `json:"title"` // optional: nil is fine
 	Active  *bool   `json:"active"`
 	Version *int64  `json:"version"`
 }
@@ -141,6 +146,10 @@ func parse(body []byte) (Event, error) {
 		ID: *raw.ID, Type: *raw.Type, SchemaVersion: *raw.SchemaVersion, OccurredAt: *raw.OccurredAt,
 		User: UserSnapshot{ID: *raw.User.ID, Email: *raw.User.Email, Name: *raw.User.Name, Active: *raw.User.Active, Version: *raw.User.Version},
 	}
+	if raw.User.Title != nil {
+		ev.User.Title = *raw.User.Title
+		ev.titleProvided = true
+	}
 	switch {
 	case ev.SchemaVersion != schemaVersion:
 		return ev, errors.Join(errInvalid, errors.New("unknown schemaVersion"))
@@ -172,9 +181,16 @@ func (p *Projection) Apply(body []byte) Outcome {
 		return Duplicate
 	}
 	p.seen[ev.ID] = struct{}{}
-	if cur, ok := p.users[ev.User.ID]; ok && cur.Version >= ev.User.Version {
+	cur, known := p.users[ev.User.ID]
+	if known && cur.Version >= ev.User.Version {
 		p.stats.Stale++
 		return Stale
+	}
+	// An optional field the body did not carry keeps its projected value:
+	// during a rolling upgrade a producer replica that predates the field
+	// still emits newer versions without it (Codex review, PR #15).
+	if known && !ev.titleProvided {
+		ev.User.Title = cur.Title
 	}
 	p.users[ev.User.ID] = ev.User
 	p.stats.Applied++

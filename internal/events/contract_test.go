@@ -29,6 +29,7 @@ func exampleUser(active bool) *identity.User {
 		ID:      exampleUserID,
 		Email:   "ada@example.com",
 		Name:    "Ada Example",
+		Title:   "Staff Engineer",
 		Active:  active,
 		Version: 4,
 	}
@@ -154,9 +155,9 @@ func TestProducerSendsOnlyDocumentedFields(t *testing.T) {
 	body, _ := json.Marshal(fixedPayload(t, TypeUpdated))
 	_ = json.Unmarshal(body, &m)
 	m["source"] = "identity"
-	m["user"].(map[string]any)["title"] = "x"
+	m["user"].(map[string]any)["department"] = "x"
 	if extra := undocumentedFields(t, m); len(extra) != 2 {
-		t.Errorf("undocumentedFields = %v, want source and user.title", extra)
+		t.Errorf("undocumentedFields = %v, want source and user.department", extra)
 	}
 }
 

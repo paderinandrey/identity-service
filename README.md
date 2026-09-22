@@ -242,10 +242,12 @@ pagination and discovery (`ServiceProviderConfig`, `ResourceTypes`,
 `Schemas`). Authentication is the static bearer token; without the token
 the routes are not mounted at all.
 
-- `userName` maps to email, `displayName` to name; `externalId` (Okta's
-  immutable user id) is stored as the `okta` external identity — the same
-  subject SAML sign-in resolves by. Email is a mutable attribute owned by
-  SCIM; a SAML assertion never writes it.
+- `userName` maps to email, `displayName` to name, `title` to the job
+  title (optional; map Okta's `title` attribute in the SCIM application
+  or it stays empty); `externalId` (Okta's immutable user id) is stored
+  as the `okta` external identity — the same subject SAML sign-in
+  resolves by. Email is a mutable attribute owned by SCIM; a SAML
+  assertion never writes it.
 - Every request is one transaction: profile, external identity, active
   flag and the outbox events they produce either all persist or none do.
   A `409 uniqueness` names the cause — a duplicate `userName` or an

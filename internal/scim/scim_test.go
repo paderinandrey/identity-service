@@ -616,3 +616,58 @@ func TestPatchWithoutActiveDoesNotReactivate(t *testing.T) {
 		t.Errorf("reactivate counted %d times by a name-only patch", e.ops["reactivate"])
 	}
 }
+
+// title rides along SCIM create, PATCH (with and without path) and PUT,
+// and shows up in the resource; PUT without it resets it, because PUT
+// replaces the resource.
+func TestTitleFlowsThroughCreatePatchAndPut(t *testing.T) {
+	e := newEnv(t)
+	payload := createUserPayload("titled@example.com", "Titled", "ext-t")
+	payload["title"] = "Staff Engineer"
+	_, created := e.do(t, "POST", "/scim/v2/Users", payload, scimToken)
+	id := created["id"].(string)
+	if created["title"] != "Staff Engineer" {
+		t.Fatalf("created title = %v", created["title"])
+	}
+	user, _ := e.store.FindByID(t.Context(), id)
+	v1 := user.Version
+
+	_, patched := e.do(t, "PATCH", "/scim/v2/Users/"+id, map[string]any{
+		"schemas":    []string{schemaPatchOp},
+		"Operations": []map[string]any{{"op": "replace", "path": "title", "value": "Principal Engineer"}},
+	}, scimToken)
+	if patched["title"] != "Principal Engineer" || patched["displayName"] != "Titled" {
+		t.Errorf("patch by path: %v", patched)
+	}
+	_, patched = e.do(t, "PATCH", "/scim/v2/Users/"+id, map[string]any{
+		"schemas":    []string{schemaPatchOp},
+		"Operations": []map[string]any{{"op": "replace", "value": map[string]any{"title": "Fellow"}}},
+	}, scimToken)
+	if patched["title"] != "Fellow" {
+		t.Errorf("patch without path: %v", patched)
+	}
+	user, _ = e.store.FindByID(t.Context(), id)
+	if user.Title != "Fellow" || user.Version != v1+2 {
+		t.Errorf("stored title=%q version=%d, want Fellow and %d", user.Title, user.Version, v1+2)
+	}
+
+	// PATCH that does not mention title keeps it.
+	e.do(t, "PATCH", "/scim/v2/Users/"+id, map[string]any{
+		"schemas":    []string{schemaPatchOp},
+		"Operations": []map[string]any{{"op": "replace", "path": "displayName", "value": "Renamed"}},
+	}, scimToken)
+	user, _ = e.store.FindByID(t.Context(), id)
+	if user.Title != "Fellow" {
+		t.Errorf("unrelated PATCH reset the title to %q", user.Title)
+	}
+
+	// PUT replaces the resource: no title means empty.
+	_, put := e.do(t, "PUT", "/scim/v2/Users/"+id, createUserPayload("titled@example.com", "Titled", "ext-t"), scimToken)
+	if _, has := put["title"]; has {
+		t.Errorf("PUT without title left %v", put["title"])
+	}
+	user, _ = e.store.FindByID(t.Context(), id)
+	if user.Title != "" {
+		t.Errorf("PUT without title stored %q", user.Title)
+	}
+}

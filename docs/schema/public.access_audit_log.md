@@ -60,6 +60,7 @@ erDiagram
   timestamp_with_time_zone last_sign_in_at
   text name
   bigint session_epoch
+  text title
   timestamp_with_time_zone updated_at
   bigint version
 }

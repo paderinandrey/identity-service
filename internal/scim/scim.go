@@ -139,6 +139,7 @@ type userResource struct {
 	ExternalID  string    `json:"externalId,omitempty"`
 	UserName    string    `json:"userName"`
 	DisplayName string    `json:"displayName"`
+	Title       string    `json:"title,omitempty"`
 	Active      bool      `json:"active"`
 	Meta        *userMeta `json:"meta,omitempty"`
 }
@@ -154,6 +155,7 @@ type userPayload struct {
 	ExternalID  string `json:"externalId"`
 	UserName    string `json:"userName"`
 	DisplayName string `json:"displayName"`
+	Title       string `json:"title"`
 	Name        struct {
 		GivenName  string `json:"givenName"`
 		FamilyName string `json:"familyName"`
@@ -187,6 +189,7 @@ func (h *Handlers) resource(ctx context.Context, u *identity.User) userResource 
 		ExternalID:  externalID,
 		UserName:    u.Email,
 		DisplayName: u.Name,
+		Title:       u.Title,
 		Active:      u.Active,
 		Meta: &userMeta{
 			ResourceType: "User",
@@ -267,6 +270,7 @@ func (h *Handlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 	user, err := h.store.ProvisionCreate(ctx, identity.Provision{
 		Email:      new(payload.UserName),
 		Name:       new(payload.displayNameOrFallback()),
+		Title:      new(payload.Title),
 		Active:     new(payload.isActive()),
 		ExternalID: new(payload.ExternalID),
 	})
@@ -312,6 +316,7 @@ func (h *Handlers) handleReplace(w http.ResponseWriter, r *http.Request) {
 	updated, err := h.apply(ctx, user.ID, identity.Provision{
 		Email:      new(payload.UserName),
 		Name:       new(payload.displayNameOrFallback()),
+		Title:      new(payload.Title), // PUT replaces the resource: absent means empty
 		Active:     new(payload.isActive()),
 		ExternalID: new(payload.ExternalID),
 	})
@@ -382,6 +387,7 @@ func applyPatchOp(desired *identity.Provision, path string, value json.RawMessag
 		var payload struct {
 			UserName    *string `json:"userName"`
 			DisplayName *string `json:"displayName"`
+			Title       *string `json:"title"`
 			ExternalID  *string `json:"externalId"`
 			Active      *bool   `json:"active"`
 		}
@@ -394,6 +400,9 @@ func applyPatchOp(desired *identity.Provision, path string, value json.RawMessag
 		if payload.DisplayName != nil {
 			desired.Name = payload.DisplayName
 		}
+		if payload.Title != nil {
+			desired.Title = payload.Title
+		}
 		if payload.ExternalID != nil {
 			desired.ExternalID = payload.ExternalID
 		}
@@ -405,6 +414,8 @@ func applyPatchOp(desired *identity.Provision, path string, value json.RawMessag
 		return unmarshalTo(value, &desired.Email)
 	case "displayname":
 		return unmarshalTo(value, &desired.Name)
+	case "title":
+		return unmarshalTo(value, &desired.Title)
 	case "externalid":
 		return unmarshalTo(value, &desired.ExternalID)
 	case "active":
@@ -537,6 +548,7 @@ func (h *Handlers) handleSchemas(w http.ResponseWriter, _ *http.Request) {
 		"attributes": []map[string]any{
 			attr("userName", "string"),
 			attr("displayName", "string"),
+			attr("title", "string"),
 			attr("externalId", "string"),
 			attr("active", "boolean"),
 		},

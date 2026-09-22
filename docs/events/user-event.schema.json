@@ -43,6 +43,10 @@
           "type": "string",
           "description": "Display name."
         },
+        "title": {
+          "type": "string",
+          "description": "Job title from provisioning (SCIM title); empty when unknown. Optional in this schema because it was added after the first release; the producer always sends it."
+        },
         "active": {
           "type": "boolean",
           "description": "false once deactivated through provisioning; sessions are revoked at that moment."

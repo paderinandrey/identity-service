@@ -101,25 +101,29 @@ for _ in $(seq 1 30); do [ "$(projection_users)" = "$expected" ] && break; sleep
 n_users=$(wc -l <<< "$expected" | tr -d ' ')
 pass "replay на пустую проекцию: $n_users пользователь(ей) с версиями из базы"
 
-# Живое изменение: SCIM PATCH имени доходит до проекции с версией +1.
+# Живое изменение: SCIM PATCH имени и должности доходит до проекции с
+# версией +1; title — первое поле, добавленное в контракт после его
+# публикации, и здесь видно, что оно проходит насквозь.
 scim_id=$(curl -s "${RESOLVE[@]}" -H "Authorization: Bearer $SCIM_TOKEN" \
   "http://$HOST/scim/v2/Users?filter=userName%20eq%20%22$USER_EMAIL%22" \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["Resources"][0]["id"])')
 before_version=$(consumer "/projection/$scim_id" | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
 new_name="QA User $RANDOM"
+new_title="QA Lead $RANDOM"
 code=$(curl -s "${RESOLVE[@]}" -o /dev/null -w '%{http_code}' -X PATCH -H "Authorization: Bearer $SCIM_TOKEN" \
   -H 'Content-Type: application/scim+json' "http://$HOST/scim/v2/Users/$scim_id" \
-  -d "{\"schemas\":[\"urn:ietf:params:scim:api:messages:2.0:PatchOp\"],\"Operations\":[{\"op\":\"replace\",\"value\":{\"displayName\":\"$new_name\"}}]}")
-[ "$code" = 200 ] || fail "SCIM PATCH имени -> $code"
+  -d "{\"schemas\":[\"urn:ietf:params:scim:api:messages:2.0:PatchOp\"],\"Operations\":[{\"op\":\"replace\",\"value\":{\"displayName\":\"$new_name\",\"title\":\"$new_title\"}}]}")
+[ "$code" = 200 ] || fail "SCIM PATCH имени и должности -> $code"
 for _ in $(seq 1 30); do
   projected=$(consumer "/projection/$scim_id")
   grep -q "\"name\":\"$new_name\"" <<< "$projected" && break
   sleep 1
 done
 grep -q "\"name\":\"$new_name\"" <<< "$projected" || fail "изменение имени не дошло до проекции: $projected"
+grep -q "\"title\":\"$new_title\"" <<< "$projected" || fail "изменение должности не дошло до проекции: $projected"
 after_version=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])' <<< "$projected")
 [ "$after_version" = "$((before_version + 1))" ] || fail "версия в проекции $after_version, ожидалась $((before_version + 1))"
-pass "SCIM-изменение имени в проекции с версией $after_version (было $before_version)"
+pass "SCIM-изменение имени и должности в проекции с версией $after_version (было $before_version)"
 
 # Повторный replay: те же версии — stale, проекция не меняется.
 stale_before=$(consumer /stats | python3 -c 'import json,sys; print(json.load(sys.stdin)["stale"])')

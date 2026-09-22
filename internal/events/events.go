@@ -22,9 +22,12 @@ const SchemaVersion = 1
 
 // UserSnapshot is the user state carried by every event.
 type UserSnapshot struct {
-	ID      string `json:"id"`
-	Email   string `json:"email"`
-	Name    string `json:"name"`
+	ID    string `json:"id"`
+	Email string `json:"email"`
+	Name  string `json:"name"`
+	// Title is optional in the published schema (added after the first
+	// release of the contract) and always sent.
+	Title   string `json:"title"`
 	Active  bool   `json:"active"`
 	Version int64  `json:"version"`
 }
@@ -54,6 +57,7 @@ func NewPayload(eventType string, u *identity.User) Payload {
 			ID:      u.ID,
 			Email:   u.Email,
 			Name:    u.Name,
+			Title:   u.Title,
 			Active:  u.Active,
 			Version: u.Version,
 		},

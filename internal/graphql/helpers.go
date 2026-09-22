@@ -142,6 +142,7 @@ func toModelUser(u *identity.User) *model.User {
 		ID:           u.ID,
 		Email:        u.Email,
 		Name:         u.Name,
+		Title:        u.Title,
 		Active:       u.Active,
 		LastSignInAt: u.LastSignInAt,
 	}
