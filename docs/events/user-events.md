@@ -58,13 +58,22 @@ remains the bootstrap path.
    the same statement or transaction that stores it:
 
    ```sql
-   INSERT INTO identity_users (id, email, name, active, version)
-   VALUES ($1, $2, $3, $4, $5)
+   -- $4 is NULL when the body carried no "title" (see below).
+   INSERT INTO identity_users (id, email, name, title, active, version)
+   VALUES ($1, $2, $3, COALESCE($4, ''), $5, $6)
    ON CONFLICT (id) DO UPDATE
      SET email = EXCLUDED.email, name = EXCLUDED.name,
+         title = COALESCE($4, identity_users.title),
          active = EXCLUDED.active, version = EXCLUDED.version
      WHERE identity_users.version < EXCLUDED.version;
    ```
+
+   An optional field that is **absent** from the body means "not
+   provided", not "empty": keep the value you already have. During a
+   rolling upgrade of the producer, a replica that predates the field
+   can still emit newer versions without it, and replacing the field
+   with empty would erase it until the next event. An explicit empty
+   string does clear it.
 
    An event whose version is not greater is *stale*: acknowledge it,
    count it, change nothing. Two events of one user processed at the

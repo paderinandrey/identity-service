@@ -154,4 +154,24 @@ func TestTitleIsOptional(t *testing.T) {
 	if u, _ := p.User(ada.ID); u.Title != "Staff Engineer" {
 		t.Errorf("projected title = %q", u.Title)
 	}
+
+	// A newer snapshot without the field (an older producer replica during
+	// a rollout) keeps the projected title; an explicit empty title clears it.
+	if got := p.Apply(rawBodyVersion(`{"id":"`+ada.ID+`","email":"a@example.com","name":"A","active":true,"version":3}`, 41)); got != Applied {
+		t.Fatalf("newer snapshot without title = %s, want applied", got)
+	}
+	if u, _ := p.User(ada.ID); u.Title != "Staff Engineer" || u.Version != 3 {
+		t.Errorf("absent title must be preserved: %+v", u)
+	}
+	cleared := ada
+	cleared.Version, cleared.Title = 4, ""
+	p.Apply(body(t, eid(42), "identity.user.updated", cleared))
+	if u, _ := p.User(ada.ID); u.Title != "" {
+		t.Errorf("explicit empty title must clear: %+v", u)
+	}
+}
+
+// rawBodyVersion is rawBody with a distinct event id per call.
+func rawBodyVersion(user string, n int) []byte {
+	return []byte(`{"id":"` + eid(n) + `","type":"identity.user.updated","schemaVersion":1,"occurredAt":"2026-09-19T12:00:00Z","user":` + user + `}`)
 }
