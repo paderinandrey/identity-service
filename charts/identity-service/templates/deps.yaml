@@ -82,5 +82,33 @@ spec:
   selector:
     app.kubernetes.io/instance: {{ $.Release.Name }}
     app.kubernetes.io/component: {{ $name }}
+{{- with $dep.ingressFrom }}
+---
+{{- /*
+A subgraph that trusts the forwarded x-identity-* headers must only be
+reachable from the router that sets them: without this any pod in the
+namespace could post forged context straight to its ClusterIP.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $fullName }}-{{ $name }}
+  labels:
+    {{- include "identity-service.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+      app.kubernetes.io/component: {{ $name }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- toYaml . | nindent 8 }}
+      ports:
+        - port: {{ $dep.port }}
+          protocol: TCP
+{{- end }}
 {{- end }}
 {{- end }}

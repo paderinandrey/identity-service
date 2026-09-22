@@ -77,6 +77,10 @@ out=$(helm template ci "$CHART" -f "$CHART/values-local.yaml")
 for component in postgresql redis rabbitmq keycloak echo stub-subgraph stub-consumer messenger; do
   has "component: $component" || { echo "FAIL: в стенде нет $component"; exit 1; }
 done
+# messenger доверяет x-identity-* — политика пускает к нему только router.
+netpols=$(grep -c 'kind: NetworkPolicy' <<< "$out" || true)
+[ "$netpols" -ge 2 ] || { echo "FAIL: NetworkPolicy в стенде $netpols, ожидалось ≥2 (identity-service, messenger)"; exit 1; }
+grep -A3 'kind: NetworkPolicy' <<< "$out" | grep -q 'name: ci-identity-service-messenger$' || { echo "FAIL: нет NetworkPolicy для messenger"; exit 1; }
 # У echo-upstream стенда своя SecurityPolicy — она тоже обязана звать
 # ext-auth на внутренний порт: на публичном validate теперь 404, а Envoy
 # отдаёт клиенту код ответа auth-сервиса, и стенд ловил это как 404 вместо 403.

@@ -270,6 +270,16 @@ inbox=$(gql "${COOKIE[@]}" -d '{"query":"{ inbox { text author { email } } }"}')
 grep -q '"text":"hello from the stand"' <<< "$inbox" || fail "inbox qa не содержит сообщения: $inbox"
 grep -q 'forbidden' <<< "$inbox" && fail "отклонённое сообщение попало в inbox: $inbox"
 pass "три сабграфа: messenger сохранил сообщение, identity разрешил автора и получателя; без права — FORBIDDEN; inbox qa получил его"
+# messenger верит x-identity-* — значит к нему напрямую можно только из
+# router (probe-под с меткой graphql-router его изображает), чужой под с
+# подделанными заголовками соединения не получает.
+MSG="http://$RELEASE-identity-service-messenger:8080/graphql"
+forge=(-X POST -H 'Content-Type: application/json' -H "x-identity-user-id: $qa_id" -H 'x-identity-permissions: messenger:messages.send' -d '{"query":"{ inbox { id } }"}')
+code=$(kubectl exec -n "$NS" "$PROBE_PLAIN" -- curl -s -o /dev/null -w '%{http_code}' --max-time 5 "${forge[@]}" "$MSG" 2>/dev/null || true)
+[ "$code" = 000 ] || fail "чужой под достучался до messenger с подделанными заголовками -> $code"
+code=$(kubectl exec -n "$NS" "$PROBE_ALLOWED" -- curl -s -o /dev/null -w '%{http_code}' --max-time 5 "${forge[@]}" "$MSG" 2>/dev/null || true)
+[ "$code" = 200 ] || fail "router не достучался до messenger -> $code"
+pass "messenger закрыт сетевой политикой: чужой под — соединения нет, router — 200"
 
 step "16. Первая установка чарта: хук миграций в пустом namespace"
 # Стенд держит зависимости в том же релизе и хук там выключен; здесь чарт

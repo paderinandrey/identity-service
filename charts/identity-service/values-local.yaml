@@ -159,6 +159,11 @@ dependencies:
     pullPolicy: Never
     port: 8080
     portName: http
+    # Trusts x-identity-* from the router, so only the router may reach it.
+    ingressFrom:
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: graphql-router
     readinessProbe:
       httpGet:
         path: /healthz

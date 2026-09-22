@@ -497,7 +497,11 @@ small messenger (`dev/messenger/`, owns `Message`, checks
 fills the router's ConfigMap; adding a subgraph is one line there plus a
 stand dependency in `values-local.yaml`. Applications and roles of the
 stand come from `deploy/stand/access.yaml` (`seed-access`); the qa user
-deliberately has no roles, `stand-qa` holds `messenger/member`.
+deliberately has no roles, `stand-qa` holds `messenger/member`. A subgraph that trusts the forwarded
+`x-identity-*` context must be reachable only from the router: the stand
+gives messenger a NetworkPolicy admitting router pods alone, and
+`stand:verify` checks that a foreign pod with forged headers gets no
+connection.
 
 `stand:verify` is the interesting part: it drives a real sign-in through
 the Keycloak login form and asserts, with observed values, that public
