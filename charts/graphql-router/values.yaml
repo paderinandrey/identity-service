@@ -38,8 +38,12 @@ readinessProbe:
   periodSeconds: 5
   failureThreshold: 20
 
+# The router image has no USER of its own, so an explicit uid is what
+# makes runAsNonRoot satisfiable.
 podSecurityContext:
   runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
   seccompProfile:
     type: RuntimeDefault
 

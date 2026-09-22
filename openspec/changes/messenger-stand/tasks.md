@@ -13,10 +13,10 @@
 
 ## 3. Стенд
 
-- [ ] 3.1 `deploy/stand/access.yaml`; `stand-up.sh`: сборка образа messenger, зависимость в `values-local.yaml`, шаг «Доступ» (seed-access + grant-role stand-qa → messenger/member); `mise run stand:up` зелёный
-- [ ] 3.2 `stand-verify.sh`: шаг «третий сабграф» — sendMessage от stand-qa с `author.email` из identity, FORBIDDEN для qa без роли, inbox qa; `mise run stand:verify` зелёный целиком
+- [x] 3.1 `deploy/stand/access.yaml`; `stand-up.sh`: сборка образа messenger, зависимость в `values-local.yaml`, шаг «Доступ» (seed-access + grant-role stand-qa → messenger/member); `mise run stand:up` зелёный
+- [x] 3.2 `stand-verify.sh`: шаг «третий сабграф» — sendMessage от stand-qa с `author.email` из identity, FORBIDDEN для qa без роли, inbox qa; `mise run stand:verify` зелёный целиком
 
 ## 4. Документация и приёмка
 
-- [ ] 4.1 README: стенд — три сабграфа, router отдельным релизом, где живёт роутинг (Envoy: пути, Router: поля), как добавить сабграф
-- [ ] 4.2 `gofmt`, `mise run lint`, `go test ./...`, тесты модулей `dev/*`, `chart:check`; CI зелёный
+- [x] 4.1 README: стенд — три сабграфа, router отдельным релизом, где живёт роутинг (Envoy: пути, Router: поля), как добавить сабграф
+- [x] 4.2 `gofmt`, `mise run lint`, `go test ./...`, тесты модулей `dev/*`, `chart:check`; CI зелёный
