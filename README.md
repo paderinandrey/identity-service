@@ -485,10 +485,27 @@ verification script therefore drives the login through
 `scripts/stand-login.py`, which reproduces that browser cookie rule —
 curl drops `Secure` cookies over HTTP and cannot complete the flow.
 
-The stand also runs a **Cosmo Router** over two subgraphs — this service
-and a stub subgraph (`dev/stub-subgraph/`) standing in for GSH/DFM: it owns
-`Order` and references our `User` entity. `/graphql` behind the proxy goes
-to the router, so a single query is answered from both subgraphs.
+Routing has two layers. **Envoy Gateway** routes by path and host and runs
+ext-auth: `/auth/*` and `/scim/v2/*` go straight to this service,
+`/graphql` goes to the router, every other service publishes its own
+HTTPRoute. The **Cosmo Router** (`charts/graphql-router`, its own release
+`identity-stand-router`) routes by GraphQL field across the composed
+supergraph; it belongs to no subgraph, which is why it is not a
+dependency of this chart. The stand composes three subgraphs — this
+service, a stub for GSH/DFM (`dev/stub-subgraph/`, owns `Order`) and a
+small messenger (`dev/messenger/`, owns `Message`, checks
+`messenger:messages.send` from the forwarded context and refuses
+mutations from a foreign `Origin`, as every cookie-authenticated
+subgraph must) — with
+`scripts/stand-compose-supergraph.sh`, which lists them in one place and
+fills the router's ConfigMap; adding a subgraph is one line there plus a
+stand dependency in `values-local.yaml`. Applications and roles of the
+stand come from `deploy/stand/access.yaml` (`seed-access`); the qa user
+deliberately has no roles, `stand-qa` holds `messenger/member`. A subgraph that trusts the forwarded
+`x-identity-*` context must be reachable only from the router: the stand
+gives messenger a NetworkPolicy admitting router pods alone, and
+`stand:verify` checks that a foreign pod with forged headers gets no
+connection.
 
 `stand:verify` is the interesting part: it drives a real sign-in through
 the Keycloak login form and asserts, with observed values, that public

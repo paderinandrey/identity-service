@@ -1,0 +1,31 @@
+extend schema
+  @link(url: "https://specs.apollo.dev/federation/v2.3", import: ["@key"])
+
+scalar Time
+
+"""
+A message between two users. Author and recipient are references into the
+identity subgraph: this service stores only their global ids and the
+router resolves the rest.
+"""
+type Message @key(fields: "id") {
+  id: ID!
+  text: String!
+  author: User!
+  recipient: User!
+  sentAt: Time!
+}
+
+type User @key(fields: "id", resolvable: false) {
+  id: ID!
+}
+
+type Query {
+  "Messages addressed to the current user. Requires an authenticated user."
+  inbox: [Message!]!
+}
+
+type Mutation {
+  "Requires messenger:messages.send."
+  sendMessage(recipientId: ID!, text: String!): Message!
+}

@@ -26,7 +26,8 @@ docker build -q -t identity-service:dev . >/dev/null
 docker build -q -t identity-service-keycloak:latest dev/keycloak >/dev/null
 docker build -q -t stub-subgraph:dev dev/stub-subgraph >/dev/null
 docker build -q -t stub-consumer:dev dev/stub-consumer >/dev/null
-echo "identity-service:dev, identity-service-keycloak:latest, stub-subgraph:dev, stub-consumer:dev собраны"
+docker build -q -t messenger:dev dev/messenger >/dev/null
+echo "identity-service:dev, identity-service-keycloak:latest, stub-subgraph:dev, stub-consumer:dev, messenger:dev собраны"
 
 step "Envoy Gateway"
 if ! kubectl get ns envoy-gateway-system >/dev/null 2>&1; then
@@ -51,7 +52,7 @@ helm upgrade --install "$RELEASE" "$CHART" -f "$CHART/values-local.yaml" -n "$NS
 # ключами. `rollout status` ждёт именно новую ревизию.
 kubectl rollout restart "deploy/$RELEASE-identity-service-keycloak" -n "$NS" >/dev/null 2>&1 || true
 kubectl rollout status "deploy/$RELEASE-identity-service-keycloak" -n "$NS" --timeout=300s >/dev/null
-for dep in postgresql redis rabbitmq keycloak echo stub-subgraph stub-consumer; do
+for dep in postgresql redis rabbitmq keycloak echo stub-subgraph stub-consumer messenger; do
   kubectl wait --for=condition=Available "deploy/$RELEASE-identity-service-$dep" -n "$NS" --timeout=300s >/dev/null
   echo "  $dep готов"
 done
@@ -66,9 +67,14 @@ migrate_out=$(kubectl run "migrate-$RANDOM" -n "$NS" --rm -i --restart=Never --q
 echo "$migrate_out" | grep -E "goose:" | tail -1
 
 step "Суперграф и router"
-./scripts/stand-compose-supergraph.sh
-kubectl rollout status "deploy/$RELEASE-identity-service-router" -n "$NS" --timeout=300s >/dev/null
-echo "router обслуживает скомпонованный суперграф"
+# Router — отдельный релиз: он не принадлежит ни одному сабграфу. Сначала
+# композиция (ей нужен живой identity-сервис ради SDL), затем релиз.
+ROUTER="$RELEASE-graphql-router"
+ROUTER="$ROUTER" ./scripts/stand-compose-supergraph.sh
+helm upgrade --install "$RELEASE-router" charts/graphql-router -n "$NS" \
+  --set fullnameOverride="$ROUTER" >/dev/null
+kubectl rollout status "deploy/$ROUTER" -n "$NS" --timeout=300s >/dev/null
+echo "router ($ROUTER) обслуживает скомпонованный суперграф"
 
 step "Сервис"
 kubectl rollout restart "deploy/$RELEASE-identity-service" -n "$NS" >/dev/null
@@ -81,6 +87,21 @@ step "Пользователь стенда"
 # по email нет, поэтому без этого шага войти нельзя.
 ./scripts/stand-provision-user.sh >/dev/null
 echo "qa@example.com заведён с externalId из Keycloak (пароль в realm: password)"
+
+step "Доступ"
+# Приложения и роли — декларативно из deploy/stand/access.yaml; роль
+# messenger/member получает stand-qa (его создаёт композиция). qa остаётся
+# без ролей: на этом держится проверка пустого заголовка прав.
+kubectl create configmap stand-access -n "$NS" --from-file=access.yaml=deploy/stand/access.yaml \
+  --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+cli() {
+  local args="$1"
+  kubectl run "cli-$RANDOM" -n "$NS" --rm -i --restart=Never --quiet \
+    --image=identity-service:dev --image-pull-policy=Never \
+    --overrides="{\"spec\":{\"volumes\":[{\"name\":\"access\",\"configMap\":{\"name\":\"stand-access\"}}],\"containers\":[{\"name\":\"cli\",\"image\":\"identity-service:dev\",\"imagePullPolicy\":\"Never\",\"args\":$args,\"envFrom\":[{\"configMapRef\":{\"name\":\"$RELEASE-identity-service\"}}],\"volumeMounts\":[{\"name\":\"access\",\"mountPath\":\"/stand\"}]}]}}" 2>&1 | tail -1
+}
+cli '["seed-access","--file","/stand/access.yaml"]'
+cli '["grant-role","--email","stand-qa@example.com","--role","messenger/member"]'
 
 cat <<EOF
 

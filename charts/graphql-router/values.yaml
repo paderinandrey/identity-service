@@ -1,0 +1,65 @@
+# Cosmo Router. The router belongs to no subgraph: it is released on its
+# own, and every subgraph only registers itself in the composition that
+# fills the ConfigMap below.
+
+replicaCount: 1
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/wundergraph/cosmo/router
+  pullPolicy: IfNotPresent
+  # Pin per environment; the stand tracks the latest release.
+  tag: "latest"
+
+service:
+  type: ClusterIP
+  port: 3002
+
+# ConfigMap with `supergraph.json` (execution config from `wgc router
+# compose`) and `config.yaml` (router configuration). Created by the
+# composition step, not by this chart: recomposing must not mean
+# re-rendering the release. Defaults to <fullname>-config.
+configMapName: ""
+configMountPath: /etc/router
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  failureThreshold: 20
+
+# The router image has no USER of its own, so an explicit uid is what
+# makes runAsNonRoot satisfiable.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# The router forwards the trusted x-identity-* context to subgraphs, so
+# it must only be reachable from the gateway that sets that context:
+# a pod posting to the router directly could forge it. Ingress only.
+networkPolicy:
+  enabled: true
+  gatewayNamespace: envoy-gateway-system
+  extraFrom: []

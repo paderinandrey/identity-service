@@ -1,0 +1,23 @@
+# Applications, permissions and roles of the local stand. Loaded by
+# stand-up with `seed-access` (idempotent, never touches assignments).
+# The qa user stays without roles on purpose: stand-verify checks that an
+# empty permissions header from validate replaces a forged one. The
+# messenger role goes to stand-qa.
+applications:
+  - name: identity
+    permissions: [access.manage]
+    roles:
+      - name: admin
+        permissions: [access.manage]
+  - name: gsh
+    permissions: [orders.read, orders.write]
+    roles:
+      - name: observer
+        permissions: [orders.read]
+      - name: operator
+        permissions: [orders.read, orders.write]
+  - name: messenger
+    permissions: [messages.send, messages.read]
+    roles:
+      - name: member
+        permissions: [messages.send, messages.read]

@@ -5,6 +5,7 @@ set -euo pipefail
 NS="${NS:-identity-stand}"
 RELEASE="${RELEASE:-identity-stand}"
 
+helm uninstall "$RELEASE-router" -n "$NS" >/dev/null 2>&1 || true
 helm uninstall "$RELEASE" -n "$NS" >/dev/null 2>&1 || true
 kubectl delete -f deploy/stand/gateway.yaml --ignore-not-found >/dev/null 2>&1 || true
 kubectl delete namespace "$NS" --ignore-not-found >/dev/null 2>&1 || true
