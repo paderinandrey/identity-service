@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net/url"
 	"strings"
 
 	"github.com/99designs/gqlgen/graphql"
@@ -32,22 +33,49 @@ func requireTrustedOrigin(allowed map[string]bool) graphql.OperationMiddleware {
 	}
 }
 
-// originAllowed: absent Origin passes, anything else must match exactly
-// (scheme, host, port) after lower-casing.
+// originAllowed: absent Origin passes; anything else is compared in
+// canonical form against the set.
 func originAllowed(allowed map[string]bool, origin string) bool {
 	if origin == "" {
 		return true
 	}
-	return allowed[strings.ToLower(strings.TrimRight(origin, "/"))]
+	canonical, ok := canonicalOrigin(origin)
+	return ok && allowed[canonical]
 }
 
-// originSet parses ALLOWED_ORIGINS (comma-separated).
+// originSet parses ALLOWED_ORIGINS (comma-separated URLs or origins),
+// keeping only entries that canonicalize.
 func originSet(list string) map[string]bool {
 	set := map[string]bool{}
 	for _, o := range strings.Split(list, ",") {
-		if o = strings.ToLower(strings.TrimSpace(strings.TrimRight(o, "/"))); o != "" {
-			set[o] = true
+		if canonical, ok := canonicalOrigin(strings.TrimSpace(o)); ok {
+			set[canonical] = true
 		}
 	}
 	return set
+}
+
+// canonicalOrigin reduces a URL or Origin value to what a browser sends:
+// lowercase scheme and host, no path, no default port — so a configured
+// "https://App.example.com:443/base" and the browser's
+// "https://app.example.com" compare equal. Same rule as the identity
+// subgraph (Codex review, PR #16).
+func canonicalOrigin(raw string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "", false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", false
+	}
+	host := strings.ToLower(u.Hostname())
+	port := u.Port()
+	if (scheme == "https" && port == "443") || (scheme == "http" && port == "80") {
+		port = ""
+	}
+	if port != "" {
+		host += ":" + port
+	}
+	return scheme + "://" + host, true
 }

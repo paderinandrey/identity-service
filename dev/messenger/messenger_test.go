@@ -102,6 +102,27 @@ func TestSendAndInboxThroughTheSchema(t *testing.T) {
 // the router forwards the browser's Origin, and mutations from anywhere
 // but the configured origins are refused before the resolver runs.
 // Reads and non-browser callers (no Origin) are left alone.
+func TestOriginCanonicalization(t *testing.T) {
+	allowed := originSet("https://App.example.com:443/base, http://app.example.com:80, ftp://x, bare")
+	for origin, want := range map[string]bool{
+		"":                                true, // non-browser caller
+		"https://app.example.com":         true, // default port dropped, path dropped
+		"HTTPS://APP.EXAMPLE.COM":         true, // case-insensitive
+		"http://app.example.com":          true,
+		"http://app.example.com:8080":     false, // explicit non-default port differs
+		"https://evil.example.com":        false,
+		"app.example.com":                 false, // not an origin
+		"https://app.example.com.evil.io": false,
+	} {
+		if got := originAllowed(allowed, origin); got != want {
+			t.Errorf("originAllowed(%q) = %v, want %v", origin, got, want)
+		}
+	}
+	if len(allowed) != 2 {
+		t.Errorf("allowed set = %v, want the two canonical http(s) origins only", allowed)
+	}
+}
+
 func TestMutationsRequireTrustedOrigin(t *testing.T) {
 	h := newTestServer()
 	perms := "messenger:messages.send"
