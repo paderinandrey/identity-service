@@ -131,7 +131,22 @@ in.
 
 Outside development the connection strings, URLs and secrets are required;
 missing ones fail startup with an explicit list. Invalid values fail startup
-with a non-zero exit code.
+with a non-zero exit code. An empty value counts as absent for text
+variables (the default applies) and as invalid for numbers, durations and
+booleans.
+
+The same list, with descriptions and defaults, comes from the binary and
+needs no configuration to run:
+
+```sh
+identity-service env
+```
+
+Variables are declared once, as tags on `config.Config`
+(`internal/config/config.go`), and parsed by
+[cleanenv](https://github.com/ilyakaznacheev/cleanenv); the rules that tags
+cannot express (required outside development, minimum secret lengths,
+distinct listen addresses) live next to them in `validate`.
 
 ## Endpoints
 

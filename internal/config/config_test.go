@@ -2,14 +2,26 @@ package config
 
 import (
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
 	"time"
 )
 
+// unsetenv removes a variable for the duration of the test. t.Setenv
+// records the previous value for restoration; the Unsetenv that follows
+// leaves the variable absent rather than empty.
+func unsetenv(t *testing.T, name string) {
+	t.Helper()
+	t.Setenv(name, "")
+	if err := os.Unsetenv(name); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLoadDefaults(t *testing.T) {
 	for _, name := range []string{EnvListenAddr, EnvAppEnv, EnvLogLevel, EnvShutdownTimeout} {
-		t.Setenv(name, "")
+		unsetenv(t, name)
 	}
 
 	cfg, err := Load()
@@ -27,6 +39,121 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.ShutdownTimeout != DefaultShutdownTimeout {
 		t.Errorf("ShutdownTimeout = %v, want %v", cfg.ShutdownTimeout, DefaultShutdownTimeout)
+	}
+}
+
+// TestDefaultsMatchTags pins the env-default tags to the exported Default
+// constants: README, tests and callers name the constants, cleanenv reads
+// the tags, and the two must not drift apart.
+func TestDefaultsMatchTags(t *testing.T) {
+	for _, name := range []string{
+		EnvListenAddr, EnvInternalListenAddr, EnvAppEnv, EnvLogLevel, EnvShutdownTimeout,
+		EnvSessionCookieName, EnvSessionIdleTimeout, EnvSessionLifetime, EnvSessionsMaxConcurrent,
+		EnvUserRevocationDelay, EnvPermissionsCacheTTL, EnvCacheMaxEntries, EnvEventsExchange, EnvOutboxRetention,
+		EnvSAMLAllowIDPInitiated,
+	} {
+		unsetenv(t, name)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	want := Config{
+		ListenAddr:            DefaultListenAddr,
+		InternalListenAddr:    DefaultInternalListenAddr,
+		AppEnv:                DefaultAppEnv,
+		LogLevel:              DefaultLogLevel,
+		ShutdownTimeout:       DefaultShutdownTimeout,
+		SessionCookieName:     DefaultSessionCookieName,
+		SessionIdleTimeout:    DefaultSessionIdleTimeout,
+		SessionLifetime:       DefaultSessionLifetime,
+		SessionsMaxConcurrent: DefaultSessionsMaxConcurrent,
+		UserRevocationDelay:   DefaultUserRevocationDelay,
+		PermissionsCacheTTL:   DefaultPermissionsCacheTTL,
+		CacheMaxEntries:       DefaultCacheMaxEntries,
+		EventsExchange:        DefaultEventsExchange,
+		OutboxRetention:       DefaultOutboxRetention,
+	}
+	got := Config{
+		ListenAddr:            cfg.ListenAddr,
+		InternalListenAddr:    cfg.InternalListenAddr,
+		AppEnv:                cfg.AppEnv,
+		LogLevel:              cfg.LogLevel,
+		ShutdownTimeout:       cfg.ShutdownTimeout,
+		SessionCookieName:     cfg.SessionCookieName,
+		SessionIdleTimeout:    cfg.SessionIdleTimeout,
+		SessionLifetime:       cfg.SessionLifetime,
+		SessionsMaxConcurrent: cfg.SessionsMaxConcurrent,
+		UserRevocationDelay:   cfg.UserRevocationDelay,
+		PermissionsCacheTTL:   cfg.PermissionsCacheTTL,
+		CacheMaxEntries:       cfg.CacheMaxEntries,
+		EventsExchange:        cfg.EventsExchange,
+		OutboxRetention:       cfg.OutboxRetention,
+	}
+	if got != want {
+		t.Errorf("defaults from tags = %+v\nwant constants      = %+v", got, want)
+	}
+	if cfg.SAMLAllowIDPInitiated {
+		t.Error("SAMLAllowIDPInitiated default must be false")
+	}
+}
+
+// Empty values: for text variables the same as absent (the charts and
+// shells around the service routinely export empty strings); for typed
+// variables an error that names the variable, like any unparsable value.
+func TestEmptyValues(t *testing.T) {
+	t.Run("text falls back to default", func(t *testing.T) {
+		t.Setenv(EnvListenAddr, "")
+		t.Setenv(EnvSessionCookieName, "")
+		t.Setenv(EnvEventsExchange, "")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v", err)
+		}
+		if cfg.ListenAddr != DefaultListenAddr || cfg.SessionCookieName != DefaultSessionCookieName || cfg.EventsExchange != DefaultEventsExchange {
+			t.Errorf("empty text variables must fall back to defaults, got %q %q %q", cfg.ListenAddr, cfg.SessionCookieName, cfg.EventsExchange)
+		}
+	})
+	for _, name := range []string{EnvLogLevel, EnvShutdownTimeout, EnvSessionsMaxConcurrent, EnvSAMLAllowIDPInitiated} {
+		t.Run("typed "+name+" rejected", func(t *testing.T) {
+			t.Setenv(name, "")
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("Load() with %s=\"\": want error, got nil", name)
+			}
+			if !strings.Contains(err.Error(), name) {
+				t.Errorf("error must name %s, got: %v", name, err)
+			}
+		})
+	}
+}
+
+func TestDescribeListsEveryVariable(t *testing.T) {
+	text, err := Describe()
+	if err != nil {
+		t.Fatalf("Describe() error = %v", err)
+	}
+	for _, name := range []string{EnvListenAddr, EnvDatabaseURL, EnvSCIMToken, EnvE2ELoginToken, EnvOutboxRetention} {
+		if !strings.Contains(text, name) {
+			t.Errorf("Describe() must mention %s", name)
+		}
+	}
+	if !strings.Contains(text, DefaultSessionCookieName) {
+		t.Error("Describe() must show defaults")
+	}
+	// Development-only defaults have no env-default tag but are still
+	// defaults the README promises; the RelayState placeholder is
+	// described rather than printed.
+	for _, dev := range []string{DefaultDatabaseURL, DefaultRedisURL, DefaultBaseURL, DefaultRabbitMQURL} {
+		if !strings.Contains(text, dev) {
+			t.Errorf("Describe() must show development default %q", dev)
+		}
+	}
+	if strings.Contains(text, DefaultRelayStateSecret) {
+		t.Error("Describe() must not print the RelayState placeholder literally")
+	}
+	if !strings.Contains(text, "required outside development") {
+		t.Error("Describe() must mark variables required outside development")
 	}
 }
 
@@ -312,9 +439,13 @@ func TestRelayStateSecretStrengthOutsideDevelopment(t *testing.T) {
 
 func TestAppEnvMustBeExplicitInKubernetes(t *testing.T) {
 	t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
-	t.Setenv(EnvAppEnv, "")
+	unsetenv(t, EnvAppEnv)
 	if _, err := Load(); err == nil {
 		t.Error("missing APP_ENV inside Kubernetes must be an error, not development")
+	}
+	t.Setenv(EnvAppEnv, "")
+	if _, err := Load(); err == nil {
+		t.Error("empty APP_ENV inside Kubernetes must be an error, not development")
 	}
 	t.Setenv(EnvAppEnv, "development")
 	if _, err := Load(); err != nil {
@@ -324,7 +455,7 @@ func TestAppEnvMustBeExplicitInKubernetes(t *testing.T) {
 
 func TestInternalListenAddr(t *testing.T) {
 	t.Run("default", func(t *testing.T) {
-		t.Setenv(EnvInternalListenAddr, "")
+		unsetenv(t, EnvInternalListenAddr)
 		cfg, err := Load()
 		if err != nil {
 			t.Fatalf("Load() error = %v", err)

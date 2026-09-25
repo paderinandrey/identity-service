@@ -45,18 +45,29 @@ func main() {
 }
 
 func run() error {
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-	logger := logging.New(os.Stdout, cfg.LogLevel)
-
 	cmd := "serve"
 	args := os.Args[1:]
 	if len(args) > 0 {
 		cmd = args[0]
 		args = args[1:]
 	}
+
+	// `env` documents the configuration and must work before any of it
+	// is set, so it is answered before Load.
+	if cmd == "env" {
+		text, err := config.Describe()
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(os.Stdout, text)
+		return err
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	logger := logging.New(os.Stdout, cfg.LogLevel)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
@@ -81,7 +92,7 @@ func run() error {
 	case "requeue-events":
 		return requeueEvents(ctx, cfg)
 	default:
-		return fmt.Errorf("unknown command %q (want serve, migrate, create-user, grant-role, revoke-role, seed-access, import-assignments, replay-users or requeue-events)", cmd)
+		return fmt.Errorf("unknown command %q (want serve, migrate, create-user, grant-role, revoke-role, seed-access, import-assignments, replay-users, requeue-events or env)", cmd)
 	}
 }
 
