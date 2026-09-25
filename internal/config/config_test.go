@@ -141,6 +141,20 @@ func TestDescribeListsEveryVariable(t *testing.T) {
 	if !strings.Contains(text, DefaultSessionCookieName) {
 		t.Error("Describe() must show defaults")
 	}
+	// Development-only defaults have no env-default tag but are still
+	// defaults the README promises; the RelayState placeholder is
+	// described rather than printed.
+	for _, dev := range []string{DefaultDatabaseURL, DefaultRedisURL, DefaultBaseURL, DefaultRabbitMQURL} {
+		if !strings.Contains(text, dev) {
+			t.Errorf("Describe() must show development default %q", dev)
+		}
+	}
+	if strings.Contains(text, DefaultRelayStateSecret) {
+		t.Error("Describe() must not print the RelayState placeholder literally")
+	}
+	if !strings.Contains(text, "required outside development") {
+		t.Error("Describe() must mark variables required outside development")
+	}
 }
 
 func TestLoadFromEnv(t *testing.T) {

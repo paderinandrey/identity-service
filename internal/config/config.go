@@ -183,9 +183,48 @@ func Describe() (string, error) {
 		}
 		if def, ok := f.Tag.Lookup("env-default"); ok {
 			fmt.Fprintf(&b, "    \tdefault: %s\n", def)
+		} else if def, ok := developmentDefault(name); ok {
+			fmt.Fprintf(&b, "    \tdefault (development only): %s\n", def)
+		}
+		if isRequiredOutsideDevelopment(name) {
+			b.WriteString("    \trequired outside development\n")
 		}
 	}
 	return b.String(), nil
+}
+
+// developmentDefault names the values applyDevelopmentDefaults fills in.
+// They carry no env-default tag on purpose (see Config), so Describe
+// renders them here. The RelayState placeholder is described, not
+// printed: a literal that must never reach production is not a default
+// worth copying.
+func developmentDefault(name string) (string, bool) {
+	switch name {
+	case EnvDatabaseURL:
+		return DefaultDatabaseURL, true
+	case EnvRedisURL:
+		return DefaultRedisURL, true
+	case EnvBaseURL:
+		return DefaultBaseURL, true
+	case EnvFrontendBaseURL:
+		return DefaultFrontendBaseURL, true
+	case EnvRabbitMQURL:
+		return DefaultRabbitMQURL, true
+	case EnvRelayStateSecret:
+		return "insecure placeholder, rejected outside development", true
+	default:
+		return "", false
+	}
+}
+
+func isRequiredOutsideDevelopment(name string) bool {
+	switch name {
+	case EnvDatabaseURL, EnvRedisURL, EnvBaseURL, EnvFrontendBaseURL,
+		EnvSAMLIdPMetadataURL, EnvRelayStateSecret, EnvRabbitMQURL:
+		return true
+	default:
+		return false
+	}
 }
 
 func describeType(t reflect.Type) string {
