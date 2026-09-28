@@ -55,11 +55,15 @@ func run() error {
 	// `env` documents the configuration and must work before any of it
 	// is set, so it is answered before Load.
 	if cmd == "env" {
-		text, err := config.Describe()
+		describe, suffix := config.Describe, "\n"
+		if len(args) > 0 && args[0] == "--markdown" {
+			describe, suffix = config.DescribeMarkdown, ""
+		}
+		text, err := describe()
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintln(os.Stdout, text)
+		_, err = fmt.Fprint(os.Stdout, text+suffix)
 		return err
 	}
 

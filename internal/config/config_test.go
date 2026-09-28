@@ -3,6 +3,7 @@ package config
 import (
 	"log/slog"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -43,7 +44,7 @@ func TestLoadDefaults(t *testing.T) {
 }
 
 // TestDefaultsMatchTags pins the env-default tags to the exported Default
-// constants: README, tests and callers name the constants, cleanenv reads
+// constants: docs, tests and callers name the constants, cleanenv reads
 // the tags, and the two must not drift apart.
 func TestDefaultsMatchTags(t *testing.T) {
 	for _, name := range []string{
@@ -142,7 +143,7 @@ func TestDescribeListsEveryVariable(t *testing.T) {
 		t.Error("Describe() must show defaults")
 	}
 	// Development-only defaults have no env-default tag but are still
-	// defaults the README promises; the RelayState placeholder is
+	// defaults the documentation promises; the RelayState placeholder is
 	// described rather than printed.
 	for _, dev := range []string{DefaultDatabaseURL, DefaultRedisURL, DefaultBaseURL, DefaultRabbitMQURL} {
 		if !strings.Contains(text, dev) {
@@ -492,4 +493,32 @@ func TestInternalListenAddr(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestDescribeMarkdownTable(t *testing.T) {
+	text, err := DescribeMarkdown()
+	if err != nil {
+		t.Fatalf("DescribeMarkdown() error = %v", err)
+	}
+	for _, want := range []string{
+		"Do not edit by hand",
+		"| `LISTEN_ADDR` | text | `:8080` |  |",
+		"| `DATABASE_URL` | text | `" + DefaultDatabaseURL + "` (development only) | yes |",
+		"| `SAML_IDP_METADATA_URL` | text | — | yes |",
+		"| `SESSION_IDLE_TIMEOUT` | duration, e.g. 30s or 24h | `24h` |  |",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("DescribeMarkdown() misses %q", want)
+		}
+	}
+	if strings.Contains(text, DefaultRelayStateSecret) {
+		t.Error("DescribeMarkdown() must not print the RelayState placeholder literally")
+	}
+	// One row per variable: the table and `env` list the same set.
+	plain, _ := Describe()
+	rows := strings.Count(text, "\n| `")
+	vars := len(regexp.MustCompile(`(?m)^  [A-Z0-9_]+ \(`).FindAllString(plain, -1))
+	if rows != vars {
+		t.Errorf("markdown has %d rows, env lists %d variables", rows, vars)
+	}
 }

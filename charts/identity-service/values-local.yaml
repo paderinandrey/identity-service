@@ -1,7 +1,7 @@
 # Local stand overlay.
 #
 # DEV-ONLY credentials, committed on purpose: these are the same loud-fake
-# values docker-compose and the README already use. They MUST be overridden
+# values docker-compose and docs/CONFIGURATION.md already use. They MUST be overridden
 # for any non-local deploy — production takes secrets from existingSecret.
 
 replicaCount: 1
