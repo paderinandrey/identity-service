@@ -51,6 +51,17 @@ Do not perform unrelated refactoring or dependency upgrades.
 Do not invent setup or verification commands; use the repository documentation,
 build files, and CI configuration.
 
+## Documentation
+
+- The README is the service card; everything deeper lives in `docs/`,
+  catalogued in `docs/INDEX.md`.
+- `docs/CONFIGURATION.md` is generated (`mise run docs:config`);
+  `mise run docs:check` and CI fail when it is stale or a relative link
+  is broken.
+- A change to behaviour, routes, configuration, integrations or
+  operations updates its document in the same pull request; requirements
+  stay in OpenSpec and `docs/` links to them.
+
 ## Go Conventions
 
 - Use the Go version declared by the module and toolchain configuration.

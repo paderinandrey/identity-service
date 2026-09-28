@@ -45,6 +45,17 @@ run = ["go run ./cmd/identity-service migrate", "tbls doc --rm-dist"]
 description = "Fail if docs/schema is stale against the migrated database (same check CI runs)"
 run = ["go run ./cmd/identity-service migrate", "tbls diff"]
 
+[tasks."docs:config"]
+description = "Regenerate docs/CONFIGURATION.md from the config tags"
+run = "go run ./cmd/identity-service env --markdown > docs/CONFIGURATION.md"
+
+[tasks."docs:check"]
+description = "Fail if docs/CONFIGURATION.md is stale or a relative Markdown link is broken (same check CI runs)"
+run = [
+  "go run ./cmd/identity-service env --markdown | diff -u docs/CONFIGURATION.md - || { echo 'docs/CONFIGURATION.md is stale: mise run docs:config' >&2; exit 1; }",
+  "python3 scripts/check_links.py .",
+]
+
 [tasks."chart:check"]
 description = "Helm chart lint and render checks (same script CI runs)"
 run = "./scripts/ci-helm-checks.sh"
