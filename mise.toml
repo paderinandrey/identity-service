@@ -2,6 +2,7 @@
 go = "1.27.1"
 golangci-lint = "2.13.2"
 tbls = "1.96.0"
+lychee = "0.24.2"
 
 [tasks.build]
 description = "Build the service binary into bin/"
@@ -50,10 +51,10 @@ description = "Regenerate docs/CONFIGURATION.md from the config tags"
 run = "go run ./cmd/identity-service env --markdown > docs/CONFIGURATION.md"
 
 [tasks."docs:check"]
-description = "Fail if docs/CONFIGURATION.md is stale or a relative Markdown link is broken (same check CI runs)"
+description = "Fail if docs/CONFIGURATION.md is stale or a relative Markdown link or anchor is broken (same check CI runs)"
 run = [
   "go run ./cmd/identity-service env --markdown | diff -u docs/CONFIGURATION.md - || { echo 'docs/CONFIGURATION.md is stale: mise run docs:config' >&2; exit 1; }",
-  "python3 scripts/check_links.py .",
+  "lychee --offline --include-fragments --no-progress './**/*.md'",
 ]
 
 [tasks."chart:check"]

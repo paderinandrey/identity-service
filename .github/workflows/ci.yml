@@ -109,14 +109,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      # Same checks as `mise run docs:check`.
-      - name: CONFIGURATION.md is generated from the config tags
-        run: go run ./cmd/identity-service env --markdown | diff -u docs/CONFIGURATION.md -
-      - name: Relative links resolve
-        run: python3 scripts/check_links.py .
+      # Tools pinned in mise.toml (Go, lychee): the same versions as locally.
+      - uses: jdx/mise-action@v2
+      - run: mise run docs:check
 
   vuln:
     runs-on: ubuntu-latest

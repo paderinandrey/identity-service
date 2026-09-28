@@ -54,10 +54,10 @@ mise run schema:check   # tbls diff — CI runs this and fails on stale docs
 
 ```bash
 mise run docs:config    # regenerate docs/CONFIGURATION.md from the config tags
-mise run docs:check     # CONFIGURATION.md is current and every relative link resolves
+mise run docs:check     # CONFIGURATION.md is current, every relative link and anchor resolves
 ```
 
-CI runs the same check. A change to behaviour, routes, configuration or operations updates its document in the same pull request.
+Links are checked by [lychee](https://lychee.cli.rs/) (pinned in `mise.toml`) in offline mode — files and headings inside the repository, never the network. CI runs the same task through mise. A change to behaviour, routes, configuration or operations updates its document in the same pull request.
 
 ## Kubernetes checks and the stand
 

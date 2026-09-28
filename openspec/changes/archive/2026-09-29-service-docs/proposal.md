@@ -35,4 +35,4 @@ README вырос до 580 строк и совмещает всё: карточ
 ## Impact
 
 `internal/config`, `cmd/identity-service`, `mise.toml`, CI, `README.md`,
-новые файлы в `docs/`, `scripts/check_links.py`.
+новые файлы в `docs/`; lychee в `mise.toml` для проверки ссылок.

@@ -4,7 +4,7 @@
 
 - [x] 1.1 `internal/config`: `variables()` читает документацию переменных из тегов; `Describe` и новый `DescribeMarkdown` рендерят её; тест на таблицу
 - [x] 1.2 `cmd/identity-service`: `env --markdown`; тест
-- [x] 1.3 `mise.toml`: `docs:config`, `docs:check`; `scripts/check_links.py`; CI-job `docs`
+- [x] 1.3 `mise.toml`: `docs:config`, `docs:check` (lychee для ссылок); CI-job `docs`
 
 ## 2. Документация
 
