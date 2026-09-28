@@ -109,6 +109,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The job runs pull-request code and needs no authenticated git.
+          persist-credentials: false
       # Tools pinned in mise.toml (Go, lychee): the same versions as locally.
       - uses: jdx/mise-action@v2
       - run: mise run docs:check

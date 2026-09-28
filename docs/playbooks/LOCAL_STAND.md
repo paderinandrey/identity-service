@@ -24,7 +24,7 @@ Routing has two layers. **Envoy Gateway** routes by path and host and runs ext-a
 
 `stand:verify` is the interesting part: it drives a real sign-in through the Keycloak login form and asserts, with observed values, that public routes stay open, internal paths are not published, an anonymous request to a protected path is refused **by the proxy** (`ext_authz_denied`, upstream never called), and that `X-Identity-*` context headers actually reach the protected upstream. The proxy contract details it guards are listed in [Integrations](../INTEGRATIONS.md#entry-proxy-envoy-ext-auth).
 
-Steps 11–13 cover the internal zone: `/internal/*` is a 404 on the public port, the internal port refuses a pod outside the policy and serves a labeled one, and the forged-header check. The probe pods are long-lived (`sleep` + `kubectl exec`): the stand CNI adds a new pod to the policy's peer set asynchronously, so a one-shot `kubectl run -i` with the right labels was refused before its address was known.
+Steps 12–13 cover the internal zone: `/internal/*` is a 404 on the public port (12), the internal port refuses a pod outside the policy and serves a labeled one (13); step 14 is the forged-header check. The probe pods are long-lived (`sleep` + `kubectl exec`): the stand CNI adds a new pod to the policy's peer set asynchronously, so a one-shot `kubectl run -i` with the right labels was refused before its address was known.
 
 ## Checks
 
